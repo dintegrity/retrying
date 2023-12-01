@@ -1,0 +1,20 @@
+[package]
+name = "tenacity-core"
+version = "0.1.0"
+rust-version = "1.64"
+description = "General-purpose retrying library for Rust (core code and retry macros)"
+authors = ["Maksym Dovhal <maksym.dovhal@gmail.com>"]
+keywords = ["retry", "tenacity"]
+homepage = "https://github.com/dintegrity/tenacity-rs"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+edition = "2021"
+
+[lib]
+proc-macro = true
+name = "tenacity_core"
+
+[dependencies]
+syn = {version = "2.0", features = ["full"]}
+quote = "1.0"
+proc-macro2 = "1.0"
