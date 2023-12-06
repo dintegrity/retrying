@@ -1,15 +1,15 @@
 [package]
-name = "tenacity"
+name = "retrying"
 version = "0.1.0"
 rust-version = "1.64"
 description = "General-purpose retrying library for Rust with macros and functions"
 authors = ["Maksym Dovhal <maksym.dovhal@gmail.com>"]
-keywords = ["retry", "tenacity"]
-homepage = "https://github.com/dintegrity/tenacity-rs"
+keywords = ["retry", "retrying"]
+homepage = "https://github.com/dintegrity/retrying"
 license = "MIT OR Apache-2.0"
 readme = "../../README.md"
 edition = "2021"
 
 [dependencies]
-tenacity-core = { path = "../tenacity-core" }
+retrying-core = { path = "../retrying-core" }
 rand = "0.8.5"

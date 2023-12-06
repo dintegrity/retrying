@@ -15,10 +15,6 @@ impl RetryConfigurationError {
     pub fn from_string(msg: String) -> RetryConfigurationError {
         RetryConfigurationError { msg: msg }
     }
-
-    pub fn msg(self) -> String {
-        self.msg
-    }
 }
 
 impl fmt::Display for RetryConfigurationError {

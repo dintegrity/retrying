@@ -29,30 +29,25 @@ pub(crate) fn add_retry_code_into_function(function: ItemFn, config: RetryConfig
 
     let RetryConfig { stop, wait, .. } = config;
 
-    let mut tenacity_variables = quote!(let mut tenacity_retry_attempt=1u32;);
-    let tenacity_end_of_loop_cycle = quote!(tenacity_retry_attempt+=1u32;);
+    let mut retrying_variables = quote!(let mut retrying_retry_attempts=1u32;);
+    let retrying_end_of_loop_cycle = quote!(retrying_retry_attempts+=1u32;);
 
     let mut stop_check = quote!();
 
     match stop {
-        Some(StopConfig {
-            stop_after_attempt,
-            stop_after_duration,
-        }) => {
-            stop_after_attempt.map(|attempt| {
-                stop_check = quote!((tenacity_retry_attempt < #attempt));
-            });
+        Some(StopConfig { attempts, duration}) => {
+            attempts.map(|a| { stop_check = quote!((retrying_retry_attempts < #a)); });
 
-            stop_after_duration.map(|duration| {
-                tenacity_variables = quote!(
-                    #tenacity_variables
-                    let tenacity_retry_stop_after_duration_start = std::time::SystemTime::now();
+            duration.map(|duration| {
+                retrying_variables = quote!(
+                    #retrying_variables
+                    let retrying_retry_stop_after_duration_start = std::time::SystemTime::now();
                 );
                 if !stop_check.is_empty() {
                     stop_check=quote!(#stop_check &&);
                 }
 
-                stop_check = quote!(#stop_check (std::time::SystemTime::now().duration_since(tenacity_retry_stop_after_duration_start).unwrap().as_secs() < (#duration as u64)))
+                stop_check = quote!(#stop_check (std::time::SystemTime::now().duration_since(retrying_retry_stop_after_duration_start).unwrap().as_secs() < (#duration as u64)))
 
             });
         }
@@ -66,35 +61,36 @@ pub(crate) fn add_retry_code_into_function(function: ItemFn, config: RetryConfig
             let mut wait_duration_calc = quote!();
 
             match wait_config {
-                WaitConfig::WaitFixed { seconds } => {
-                    tenacity_variables = quote!(
-                        #tenacity_variables
-                        let tenacity_wait_duration=#seconds;
+                WaitConfig::Fixed { seconds } => {
+                    retrying_variables = quote!(
+                        #retrying_variables
+                        let retrying_wait_duration=#seconds;
                     )
                 }
-                WaitConfig::WaitRandom { min, max } => {
-                    tenacity_variables = quote!(
-                        #tenacity_variables
-                        let mut tenacity_wait_duration=0u32;
-                        let mut tenacity_wait_random_rng = tenacity::rand::thread_rng();
+                WaitConfig::Random { min, max } => {
+                    retrying_variables = quote!(
+                        #retrying_variables
+                        let mut retrying_wait_duration=0u32;
+                        use retrying::rand::Rng;
+                        let mut retrying_wait_random_rng = retrying::rand::thread_rng();
                     );
                     wait_duration_calc = quote!(
-                        tenacity_wait_duration = tenacity_wait_random_rng.gen_range(#min..=#max) as u32;
+                        retrying_wait_duration = retrying_wait_random_rng.gen_range(#min..=#max) as u32;
                     );
                 }
-                WaitConfig::WaitExponential {
+                WaitConfig::Exponential {
                     multiplier,
                     min,
                     max,
                     exp_base,
                 } => {
-                    tenacity_variables = quote!(
-                        #tenacity_variables
-                        let mut tenacity_wait_duration=0u32;
+                    retrying_variables = quote!(
+                        #retrying_variables
+                        let mut retrying_wait_duration=0u32;
                     );
 
                     wait_duration_calc = quote!(
-                        tenacity_wait_duration = std::cmp::min(#multiplier * #exp_base.pow(tenacity_retry_attempt - 1) + #min , #max);
+                        retrying_wait_duration = std::cmp::min(#multiplier * #exp_base.pow(retrying_retry_attempts - 1) + #min , #max);
                     );
                 }
                 _ => (),
@@ -104,8 +100,8 @@ pub(crate) fn add_retry_code_into_function(function: ItemFn, config: RetryConfig
                 unimplemented!()
             } else {
                 wait_code = quote!(#wait_duration_calc
-                    println!("Sync wait {} seconds", tenacity_wait_duration);
-                    std::thread::sleep(std::time::Duration::from_secs(tenacity_wait_duration as u64));
+                    println!("Sync wait {} seconds", retrying_wait_duration);
+                    std::thread::sleep(std::time::Duration::from_secs(retrying_wait_duration as u64));
                 );
             }
         }
@@ -118,7 +114,7 @@ pub(crate) fn add_retry_code_into_function(function: ItemFn, config: RetryConfig
     #vis #constness #unsafety #asyncness #abi fn #ident<#gen_params>(#params) #return_type
     #where_clause
     {
-        #tenacity_variables
+        #retrying_variables
 
         loop {
             match #block {
@@ -129,7 +125,7 @@ pub(crate) fn add_retry_code_into_function(function: ItemFn, config: RetryConfig
                 },
                 Err(err) => break Err(err)
             }
-            #tenacity_end_of_loop_cycle
+            #retrying_end_of_loop_cycle
         }
     })
 }

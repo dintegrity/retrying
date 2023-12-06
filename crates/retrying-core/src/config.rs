@@ -9,14 +9,14 @@ type AttributeArgs = syn::punctuated::Punctuated<syn::Meta, syn::Token![,]>;
 
 
 pub enum WaitConfig {
-    WaitFixed { seconds: u32 },
-    WaitRandom { min: u32, max: u32 },
-    WaitExponential { multiplier: u32, min: u32, max: u32, exp_base: u32},
+    Fixed { seconds: u32 },
+    Random { min: u32, max: u32 },
+    Exponential { multiplier: u32, min: u32, max: u32, exp_base: u32},
 }
 
 pub(crate) struct  StopConfig {
-    pub(crate) stop_after_attempt: Option<u32>,
-    pub(crate) stop_after_duration: Option<u32>
+    pub(crate) attempts: Option<u32>,
+    pub(crate) duration: Option<u32>
 }
 
 pub(crate) struct RetryConfig {
@@ -36,34 +36,34 @@ impl RetryConfig {
     }
 
     fn stop(&mut self, expr: syn::Expr) -> Result<(), RetryConfigurationError> {
-        let mut stop_after_attempt = None;
-        let mut stop_after_duration = None;
+        let mut attempts = None;
+        let mut duration = None;
         let functions = parse_functions_expr(expr)?;
     
         for func in functions {
             match func.ident.as_str() {
-                "stop_after_attempt" => stop_after_attempt = func.args.first().map(|arg|arg.value.to_string().parse::<u32>().unwrap()),
-                "stop_after_duration" => stop_after_duration = func.args.first().map(|arg|arg.value.to_string().parse::<u32>().unwrap()),
-                unknown => return Err(RetryConfigurationError::from_string(format!("Configuration {} is wrong for stop", unknown)))
+                "attempts" => attempts = func.args.first().map(|arg|arg.value.to_string().parse::<u32>().unwrap()),
+                "duration" => duration = func.args.first().map(|arg|arg.value.to_string().parse::<u32>().unwrap()),
+                unknown => return Err(RetryConfigurationError::from_string(format!("Configuration {} is wrong for stop. Possible configuration option is `attempts` and `duration`", unknown)))
             }
         }
 
-        Ok(self.stop = Some(StopConfig { stop_after_attempt, stop_after_duration }))
+        Ok(self.stop = Some(StopConfig { attempts, duration }))
         
     }
 
     fn wait(&mut self, expr: syn::Expr) -> Result<(), RetryConfigurationError> {
         let ParsedFunction{ident, args} = parse_function(expr)?;
         match ident.as_str() {
-            "wait_fixed" => {
+            "fixed" => {
                 if args.len() > 1 || args.first().filter(|x|x.ident.is_some()).is_some() {
-                    Err(RetryConfigurationError::from_str("wait_fixed has only one argument without name. For exampe, `wait=wait_fixed(1)`"))
+                    Err(RetryConfigurationError::from_str("wait=fixed has only one argument without name. For exampe, `wait=fixed(1)`"))
                 } else {
-                    let value = args.first().map(|x|WaitConfig::WaitFixed{seconds: x.value.to::<u32>().unwrap()});
+                    let value = args.first().map(|x|WaitConfig::Fixed{seconds: x.value.to::<u32>().unwrap()});
                     Ok(self.wait = value)
                 }            
             },
-            "wait_random" => {
+            "random" => {
 
                 let mut min: u32 = 0;
                 let mut max: u32 = 3600;
@@ -72,14 +72,14 @@ impl RetryConfig {
                     match ident {
                         Some(x) if x == "min".to_string() => min = value.to::<u32>()?,
                         Some(x) if x == "max".to_string() => max = value.to::<u32>()?,
-                        _ => return Err(RetryConfigurationError::from_str("wait_random has wrong confugiration. Only `max` and `min` attributes is possible")),
+                        _ => return Err(RetryConfigurationError::from_str("wait=random has wrong confugiration. Only `max` and `min` attributes is possible")),
                         
                     }
                 };
 
-                Ok(self.wait = Some(WaitConfig::WaitRandom { min, max }))             
+                Ok(self.wait = Some(WaitConfig::Random { min, max }))             
             },               
-            "wait_exponential" => {
+            "exponential" => {
 
                 let mut min: u32 = 0;
                 let mut max: u32 = 3600;
@@ -92,12 +92,12 @@ impl RetryConfig {
                         Some(x) if x == "max".to_string() => max = value.to::<u32>()?,
                         Some(x) if x == "multiplier".to_string() => multiplier = value.to::<u32>()?,
                         Some(x) if x == "exp_base".to_string() => exp_base = value.to::<u32>()?,
-                        _ => return Err(RetryConfigurationError::from_str("wait_exponential has wrong confugiration. Only `multiplier`, `max`, `min` and `exp_base` attributes is possible")),
+                        _ => return Err(RetryConfigurationError::from_str("wait=exponential has wrong configuration. Only `multiplier`, `max`, `min` and `exp_base` attributes is possible")),
                         
                     }
                 };
 
-                Ok(self.wait = Some(WaitConfig::WaitExponential { multiplier, min, max, exp_base }))    
+                Ok(self.wait = Some(WaitConfig::Exponential { multiplier, min, max, exp_base }))    
             },
             unknown => Err(RetryConfigurationError::from_string(format!("Configuration {} is wrong for wait. Possible configuration is `wait_fixed`, `wait_random` and `wait_exponential`", unknown)))
         }
