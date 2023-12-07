@@ -8,7 +8,7 @@ pub(crate) fn prepare_retriable_function(args: TokenStream, item: TokenStream) -
 
     let function: ItemFn = match syn::parse2(item.clone()) {
         Ok(it) => it,
-        Err(e) => panic!("{}", e),
+        Err(e) => panic!("Somethign wrong {}", e),
     };
 
     crate::code_gen::add_retry_code_into_function(function, config)

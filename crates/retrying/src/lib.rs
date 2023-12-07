@@ -1,5 +1,15 @@
 pub use rand;
 pub use retrying_core::retry;
+pub use std::thread::sleep as sleep_sync;
+pub use std::time::Duration;
+
+#[doc(hidden)]
+#[cfg(feature = "tokio")]
+pub use tokio::time::sleep as sleep_async;
+
+#[doc(hidden)]
+#[cfg(feature = "async_std")]
+pub use async_std::task::sleep as sleep_async;
 
 use std::fmt;
 
@@ -39,7 +49,7 @@ pub fn overrite_int_by_env(
 
     match value {
         Some(v) => v.parse::<usize>().map_err(|e| {
-            RetryingError::from_string(format!("Failed to parse value {} to `usize`", v))
+            RetryingError::from_string(format!("Failed to parse value {} to `usize`", e))
         }),
         None => Ok(original),
     }

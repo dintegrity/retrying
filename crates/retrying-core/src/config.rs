@@ -221,7 +221,7 @@ fn parse_function(function_expr: syn::Expr) -> Result<ParsedFunction, RetryConfi
                 },
                 None => Err(RetryConfigurationError::from_str("Incorrect function ident"))
             },
-            _ => unimplemented!() 
+            _ => unimplemented!("Something wrong in parse_function") 
         },
         _ => Err(RetryConfigurationError::from_str("Not a function"))
     }

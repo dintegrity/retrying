@@ -36,7 +36,7 @@ pub(crate) fn add_retry_code_into_function(function: ItemFn, config: RetryConfig
 
     match stop {
         Some(StopConfig { attempts, duration}) => {
-            attempts.map(|a| { stop_check = quote!((retrying_retry_attempts < #a)); });
+            attempts.map(|a| { stop_check = quote!((retrying_retry_attempts <= #a)); });
 
             duration.map(|duration| {
                 retrying_variables = quote!(
@@ -70,12 +70,14 @@ pub(crate) fn add_retry_code_into_function(function: ItemFn, config: RetryConfig
                 WaitConfig::Random { min, max } => {
                     retrying_variables = quote!(
                         #retrying_variables
-                        let mut retrying_wait_duration=0u32;
-                        use retrying::rand::Rng;
-                        let mut retrying_wait_random_rng = retrying::rand::thread_rng();
+                        let mut retrying_wait_duration=0u32;   
                     );
                     wait_duration_calc = quote!(
-                        retrying_wait_duration = retrying_wait_random_rng.gen_range(#min..=#max) as u32;
+                        retrying_wait_duration = {       
+                            use retrying::rand::Rng;                 
+                            let mut retrying_wait_random_rng = retrying::rand::thread_rng();
+                            retrying_wait_random_rng.gen_range(#min..=#max) as u32
+                        };
                     );
                 }
                 WaitConfig::Exponential {
@@ -93,15 +95,17 @@ pub(crate) fn add_retry_code_into_function(function: ItemFn, config: RetryConfig
                         retrying_wait_duration = std::cmp::min(#multiplier * #exp_base.pow(retrying_retry_attempts - 1) + #min , #max);
                     );
                 }
-                _ => (),
             };
 
             if asyncness.is_some() {
-                unimplemented!()
+                wait_code = quote!(#wait_duration_calc
+                    println!("Async wait {} seconds", retrying_wait_duration);
+                    retrying::sleep_async(retrying::Duration::from_secs(retrying_wait_duration as u64)).await;
+                );
             } else {
                 wait_code = quote!(#wait_duration_calc
                     println!("Sync wait {} seconds", retrying_wait_duration);
-                    std::thread::sleep(std::time::Duration::from_secs(retrying_wait_duration as u64));
+                    retrying::sleep_sync(retrying::Duration::from_secs(retrying_wait_duration as u64));
                 );
             }
         }
