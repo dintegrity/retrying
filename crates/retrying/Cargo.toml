@@ -1,0 +1,36 @@
+[package]
+name = "retrying"
+version = "0.1.0"
+rust-version = "1.64"
+description = "General-purpose retrying library for Rust with macros and functions"
+authors = ["Maksym Dovhal <maksym.dovhal@gmail.com>"]
+keywords = ["retry", "retrying"]
+homepage = "https://github.com/dintegrity/retrying"
+license = "MIT OR Apache-2.0"
+readme = "../../README.md"
+edition = "2021"
+
+[dependencies]
+retrying-core = { path = "../retrying-core" }
+rand = "0.8.5"
+tokio = { version = "1", optional = true, features = ["time"] }
+async-std = { version = "1", optional = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+async-std = { version = "1" }
+
+[features]
+tokio = ["dep:tokio"]
+async_std = ["dep:async-std"]
+
+[[example]]
+name = "tokio"
+required-features = ["tokio"]
+
+[[example]]
+name = "async_std"
+required-features = ["async_std"]
+
+[[example]]
+name = "sync"
