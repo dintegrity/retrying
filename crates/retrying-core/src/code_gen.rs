@@ -60,17 +60,17 @@ pub(crate) fn add_retry_code_into_function(function: ItemFn, config: RetryConfig
                     Some(prefix) => {
                         retrying_variables = quote!(
                             #retrying_variables
-                            let retrying_stop_duration = ::retrying::overrite_by_env::<u32>(#config_duration, #prefix, "STOP__DURATION");
+                            let retrying_stop_duration = ::retrying::overrite_by_env::<f32>(#config_duration, #prefix, "STOP__DURATION");
                             let retrying_stop_duration_startime = ::std::time::SystemTime::now();
                         );
-                        stop_check = quote!(#stop_check (::std::time::SystemTime::now().duration_since(retrying_stop_duration_startime).unwrap().as_secs() < (retrying_stop_duration as u64)));
+                        stop_check = quote!(#stop_check (::std::time::SystemTime::now().duration_since(retrying_stop_duration_startime).unwrap().as_secs_f32() < retrying_stop_duration));
                     },
                     None => {
                         retrying_variables = quote!(
                             #retrying_variables
                             let retrying_stop_duration_startime = ::std::time::SystemTime::now();
                         );
-                        stop_check = quote!(#stop_check (::std::time::SystemTime::now().duration_since(retrying_stop_duration_startime).unwrap().as_secs() < (#config_duration as u64)));
+                        stop_check = quote!(#stop_check (::std::time::SystemTime::now().duration_since(retrying_stop_duration_startime).unwrap().as_secs_f32() < #config_duration));
                     }
                 }
             });
@@ -91,7 +91,7 @@ pub(crate) fn add_retry_code_into_function(function: ItemFn, config: RetryConfig
                         Some(prefix) => {
                             retrying_variables = quote!(
                                 #retrying_variables
-                                let retrying_wait_duration=::retrying::overrite_by_env::<u32>(#seconds, #prefix, "WAIT__FIXED");
+                                let retrying_wait_duration=::retrying::overrite_by_env::<f32>(#seconds, #prefix, "WAIT__FIXED");
                             )
                         },
                         None => 
@@ -108,15 +108,15 @@ pub(crate) fn add_retry_code_into_function(function: ItemFn, config: RetryConfig
                         Some(prefix) => {
                             retrying_variables = quote!(
                                 #retrying_variables
-                                let retrying_wait_random_min=::retrying::overrite_by_env::<u32>(#min, #prefix, "WAIT__RANDOM__MIN");
-                                let retrying_wait_random_max=::retrying::overrite_by_env::<u32>(#max, #prefix, "WAIT__RANDOM__MAX");
-                                let mut retrying_wait_duration=0u32;
+                                let retrying_wait_random_min=::retrying::overrite_by_env::<f32>(#min, #prefix, "WAIT__RANDOM__MIN");
+                                let retrying_wait_random_max=::retrying::overrite_by_env::<f32>(#max, #prefix, "WAIT__RANDOM__MAX");
+                                let mut retrying_wait_duration=0f32;
                             );
                             wait_duration_calc = quote!(
                                 retrying_wait_duration = {       
                                     use ::retrying::rand::Rng;                 
                                     let mut retrying_wait_random_rng = ::retrying::rand::thread_rng();
-                                    retrying_wait_random_rng.gen_range(retrying_wait_random_min..=retrying_wait_random_max) as u32
+                                    retrying_wait_random_rng.gen_range(retrying_wait_random_min..=retrying_wait_random_max) as f32
                                 };
                             )
 
@@ -124,13 +124,13 @@ pub(crate) fn add_retry_code_into_function(function: ItemFn, config: RetryConfig
                         None => {
                             retrying_variables = quote!(
                                 #retrying_variables
-                                let mut retrying_wait_duration=0u32;   
+                                let mut retrying_wait_duration=0f32;   
                             );
                             wait_duration_calc = quote!(
                                 retrying_wait_duration = {       
                                     use ::retrying::rand::Rng;                 
                                     let mut retrying_wait_random_rng = ::retrying::rand::thread_rng();
-                                    retrying_wait_random_rng.gen_range(#min..=#max) as u32
+                                    retrying_wait_random_rng.gen_range(#min..=#max) as f32
                                 };
                             )
                         }
@@ -146,24 +146,24 @@ pub(crate) fn add_retry_code_into_function(function: ItemFn, config: RetryConfig
                         Some(prefix) => {
                             retrying_variables = quote!(
                                 #retrying_variables
-                                let retrying_wait_exponential_multiplier=::retrying::overrite_by_env::<u32>(#multiplier, #prefix, "WAIT__EXPONENTIAL__MULTIPLIER");
-                                let retrying_wait_exponential_min=::retrying::overrite_by_env::<u32>(#min, #prefix, "WAIT__EXPONENTIAL__MIN");
-                                let retrying_wait_exponential_max=::retrying::overrite_by_env::<u32>(#max, #prefix, "WAIT__EXPONENTIAL__MAX");
+                                let retrying_wait_exponential_multiplier=::retrying::overrite_by_env::<f32>(#multiplier, #prefix, "WAIT__EXPONENTIAL__MULTIPLIER");
+                                let retrying_wait_exponential_min=::retrying::overrite_by_env::<f32>(#min, #prefix, "WAIT__EXPONENTIAL__MIN");
+                                let retrying_wait_exponential_max=::retrying::overrite_by_env::<f32>(#max, #prefix, "WAIT__EXPONENTIAL__MAX");
                                 let retrying_wait_exponential_exp_base=::retrying::overrite_by_env::<u32>(#exp_base, #prefix, "WAIT__EXPONENTIAL__EXP_BASE");
-                                let mut retrying_wait_duration=0u32;
+                                let mut retrying_wait_duration=0f32;
                             );
                             wait_duration_calc = quote!(
-                                retrying_wait_duration = ::std::cmp::min(retrying_wait_exponential_multiplier * retrying_wait_exponential_exp_base.pow(retrying_retry_attempt - 1) + retrying_wait_exponential_min , retrying_wait_exponential_max);
+                                retrying_wait_duration = retrying_wait_exponential_max.min(retrying_wait_exponential_multiplier * (retrying_wait_exponential_exp_base.powf(retrying_retry_attempt - 1) as f32) + retrying_wait_exponential_min);
                             )
                         },
                         None => {
                             retrying_variables = quote!(
                                 #retrying_variables
-                                let mut retrying_wait_duration=0u32;
+                                let mut retrying_wait_duration=0f32;
                             );
         
                             wait_duration_calc = quote!(
-                                retrying_wait_duration = ::std::cmp::min(#multiplier * #exp_base.pow(retrying_retry_attempt - 1) + #min , #max);
+                                retrying_wait_duration = #max.min(#multiplier * (#exp_base.pow(retrying_retry_attempt - 1) as f32) + #min);
                             )
                         }
                     };
@@ -175,12 +175,12 @@ pub(crate) fn add_retry_code_into_function(function: ItemFn, config: RetryConfig
             if asyncness.is_some() {
                 wait_code = quote!(#wait_duration_calc
                     println!("Async wait {} seconds", retrying_wait_duration);
-                    ::retrying::sleep_async(::retrying::Duration::from_secs(retrying_wait_duration as u64)).await;
+                    ::retrying::sleep_async(::retrying::Duration::from_secs_f32(retrying_wait_duration)).await;
                 );
             } else {
                 wait_code = quote!(#wait_duration_calc
                     println!("Sync wait {} seconds", retrying_wait_duration);
-                    ::retrying::sleep_sync(::retrying::Duration::from_secs(retrying_wait_duration as u64));
+                    ::retrying::sleep_sync(::retrying::Duration::from_secs_f32(retrying_wait_duration));
                 );
             }
         }

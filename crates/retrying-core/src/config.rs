@@ -1,4 +1,5 @@
 use std::str::FromStr;
+use std::fmt;
 use proc_macro2::TokenStream;
 use syn::parse::Parser;
 use syn::punctuated::Punctuated;
@@ -9,14 +10,14 @@ type AttributeArgs = syn::punctuated::Punctuated<syn::Meta, syn::Token![,]>;
 
 
 pub enum WaitConfig {
-    Fixed { seconds: u32 },
-    Random { min: u32, max: u32 },
-    Exponential { multiplier: u32, min: u32, max: u32, exp_base: u32},
+    Fixed { seconds: f32 },
+    Random { min: f32, max: f32 },
+    Exponential { multiplier: f32, min: f32, max: f32, exp_base: u32},
 }
 
 pub(crate) struct  StopConfig {
     pub(crate) attempts: Option<u32>,
-    pub(crate) duration: Option<u32>
+    pub(crate) duration: Option<f32>
 }
 
 pub(crate) struct RetryConfig {
@@ -43,7 +44,7 @@ impl RetryConfig {
         for func in functions {
             match func.ident.as_str() {
                 "attempts" => attempts = func.args.first().map(|arg|arg.value.to_string().parse::<u32>().unwrap()),
-                "duration" => duration = func.args.first().map(|arg|arg.value.to_string().parse::<u32>().unwrap()),
+                "duration" => duration = func.args.first().map(|arg|arg.value.to_string().parse::<f32>().unwrap()),
                 unknown => return Err(RetryConfigurationError::from_string(format!("Configuration {} is wrong for stop. Possible configuration option is `attempts` and `duration`", unknown)))
             }
         }
@@ -59,19 +60,19 @@ impl RetryConfig {
                 if args.len() > 1 || args.first().filter(|x|x.ident.is_some()).is_some() {
                     Err(RetryConfigurationError::from_str("wait=fixed has only one argument without name. For exampe, `wait=fixed(1)`"))
                 } else {
-                    let value = args.first().map(|x|WaitConfig::Fixed{seconds: x.value.to::<u32>().unwrap()});
+                    let value = args.first().map(|x|WaitConfig::Fixed{seconds: x.value.to::<f32>().unwrap()});
                     Ok(self.wait = value)
                 }            
             },
             "random" => {
 
-                let mut min: u32 = 0;
-                let mut max: u32 = 3600;
+                let mut min: f32 = 0.0;
+                let mut max: f32 = 3600.0;
 
                 for FunctionArgument { ident, value } in args {
                     match ident {
-                        Some(x) if x == "min".to_string() => min = value.to::<u32>()?,
-                        Some(x) if x == "max".to_string() => max = value.to::<u32>()?,
+                        Some(x) if x == "min".to_string() => min = value.to::<f32>()?,
+                        Some(x) if x == "max".to_string() => max = value.to::<f32>()?,
                         _ => return Err(RetryConfigurationError::from_str("wait=random has wrong confugiration. Only `max` and `min` attributes is possible")),
                         
                     }
@@ -81,16 +82,16 @@ impl RetryConfig {
             },               
             "exponential" => {
 
-                let mut min: u32 = 0;
-                let mut max: u32 = 3600;
-                let mut multiplier: u32 = 1;
+                let mut min: f32 = 0.0;
+                let mut max: f32 = 3600.0;
+                let mut multiplier: f32 = 1.0;
                 let mut exp_base: u32 = 2;
 
                 for FunctionArgument { ident, value } in args {
                     match ident {
-                        Some(x) if x == "min".to_string() => min = value.to::<u32>()?,
-                        Some(x) if x == "max".to_string() => max = value.to::<u32>()?,
-                        Some(x) if x == "multiplier".to_string() => multiplier = value.to::<u32>()?,
+                        Some(x) if x == "min".to_string() => min = value.to::<f32>()?,
+                        Some(x) if x == "max".to_string() => max = value.to::<f32>()?,
+                        Some(x) if x == "multiplier".to_string() => multiplier = value.to::<f32>()?,
                         Some(x) if x == "exp_base".to_string() => exp_base = value.to::<u32>()?,
                         _ => return Err(RetryConfigurationError::from_str("wait=exponential has wrong configuration. Only `multiplier`, `max`, `min` and `exp_base` attributes is possible")),
                         
@@ -152,24 +153,28 @@ impl RetryConfig {
 }
 
 
+#[derive(Debug)]
 enum ParsedLit {
-    ParsedInt(usize),
+    ParsedInt(u32),
     ParsedString(String),
     ParsedBool(bool),
+    ParseFloat(f32)
+}
+
+impl fmt::Display for ParsedLit {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ParsedLit::ParsedInt(v) => write!(f, "{v}"),
+            ParsedLit::ParsedString(v) => write!(f, "{v}"),
+            ParsedLit::ParsedBool(v) => write!(f, "{v}"),
+            ParsedLit::ParseFloat(v) => write!(f, "{v}")
+        }
+    }
 }
 
 impl ParsedLit {
-    fn to_string(&self) -> String {
-        // TODO check other ways because this is ugly, maybe we can do this simple with enums
-        match self {
-            ParsedLit::ParsedInt(v) => v.to_string(),
-            ParsedLit::ParsedString(v) => v.to_string(),
-            ParsedLit::ParsedBool(v) => v.to_string()
-        }
-    }
-
     fn to<T: FromStr>(&self) -> Result<T, RetryConfigurationError> {
-        self.to_string().parse::<T>().map_err(|_|RetryConfigurationError::from_str("Failed cast literal"))
+        self.to_string().parse::<T>().map_err(|_|RetryConfigurationError::from_string(format!("Failed cast literal {:?}", self)))
     }
 }
 
@@ -270,14 +275,18 @@ fn parse_path(expr: syn::Expr) -> Result<String, RetryConfigurationError> {
 
 fn parse_lit(lit: syn::Lit) -> Result<ParsedLit, RetryConfigurationError> {
     match lit {
-        syn::Lit::Int(lit) => match lit.base10_parse::<usize>() {
+        syn::Lit::Int(lit) => match lit.base10_parse::<u32>() {
             Ok(value) => Ok(ParsedLit::ParsedInt(value)),
             Err(e) => Err(RetryConfigurationError::from_string(format!("Failed to parse LitInt to usize. Error: {}", e))),
         },
         syn::Lit::Str(s) => Ok(ParsedLit::ParsedString(s.value())),
         syn::Lit::Verbatim(s) => Ok(ParsedLit::ParsedString(s.to_string())),
         syn::Lit::Bool(b) => Ok(ParsedLit::ParsedBool(b.value)),
-        _ => Err(RetryConfigurationError::from_str("Unsupported literal. Currently supported only Int, Str and Verbatim")),
+        syn::Lit::Float(b) => match b.base10_parse::<f32>() {
+            Ok(value) => Ok(ParsedLit::ParseFloat(value)),
+            Err(e) => Err(RetryConfigurationError::from_string(format!("Failed to parse LitFloat to f32. Error: {}", e)))
+        }
+        _ => Err(RetryConfigurationError::from_str("Unsupported literal. Currently supported only Int, Str, Verbatim, Bool and Float")),
     }
 }
 

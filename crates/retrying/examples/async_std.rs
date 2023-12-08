@@ -32,7 +32,7 @@ fn main() {
             try_retry_attempts_exponential("try_retry_attempts_exponential").await;
         }
     ));
-
+    
     std::env::set_var("RETRYING_TEST__STOP__ATTEMPTS", "3");
     std::env::set_var("RETRYING_TEST__WAIT__FIXED", "2");
 
