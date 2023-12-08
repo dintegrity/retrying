@@ -33,9 +33,18 @@ async fn main() {
             try_retry_attempts_exponential("try_retry_attempts_exponential").await;
         }
     ));
+
+    std::env::set_var("RETRYING_TEST__STOP__ATTEMPTS", "3");
+    std::env::set_var("RETRYING_TEST__WAIT__FIXED", "2");
+
+    handles.push(tokio::spawn(
+        async {
+            try_retry_attempts_fixed_env("try_retry_attempts_fixed_env").await;
+        }
+    ));
   
     for future in handles {
-        let result = handle.await;
+        let _result = future.await;
     }
        
 }
@@ -66,6 +75,12 @@ async fn try_retry_attempts_random(in_param: &str) -> Result<i32, ParseIntError>
 
 #[retry(stop=attempts(4),wait=exponential(min=1,max=10))]
 async fn try_retry_attempts_exponential(in_param: &str) -> Result<i32, ParseIntError> {
+    println!("{}", in_param);
+    in_param.parse::<i32>()
+}
+
+#[retry(stop=attempts(1000),wait=fixed(1000),env_prefix="RETRYING_TEST")]
+async fn try_retry_attempts_fixed_env(in_param: &str) -> Result<i32, ParseIntError> {
     println!("{}", in_param);
     in_param.parse::<i32>()
 }

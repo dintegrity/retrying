@@ -1,5 +1,6 @@
 pub use rand;
 pub use retrying_core::retry;
+use std::str::FromStr;
 pub use std::thread::sleep as sleep_sync;
 pub use std::time::Duration;
 
@@ -15,7 +16,7 @@ use std::fmt;
 
 #[derive(Debug, Clone)]
 pub struct RetryingError {
-    msg: String,
+    pub msg: String,
 }
 
 impl RetryingError {
@@ -40,36 +41,36 @@ impl fmt::Display for RetryingError {
 //                      Public functions
 ////////////////////////////////////////////////////////////
 
-pub fn overrite_int_by_env(
-    original: usize,
+
+pub fn overrite_by_env<T: FromStr>(
+    original: T,
     prefix: &str,
     name: &str,
-) -> Result<usize, RetryingError> {
-    let value = get_env_variable_value(format!("{}_{}", prefix, name))?;
+) -> T {
 
-    match value {
-        Some(v) => v.parse::<usize>().map_err(|e| {
-            RetryingError::from_string(format!("Failed to parse value {} to `usize`", e))
-        }),
-        None => Ok(original),
+    let os_variable = format!("{}__{}", prefix, name);
+
+    match get_env_case_insensitive(&os_variable) {
+        Ok(Some(v)) => match v.parse::<T>() {
+            Ok(parsed) => parsed,
+            Err(_) => {
+                eprint!("Failed to parse OS env variable '{}' with value '{}'.", os_variable, v);
+                original
+            }
+        },
+        Err(RetryingError { msg }) => {
+            eprint!("Failed to get OS env variable '{}'. Error: {} ", os_variable, msg);
+            original
+        },
+        Ok(None) => original
     }
-}
-
-pub fn override_str_by_env(
-    original: String,
-    prefix: &str,
-    name: &str,
-) -> Result<String, RetryingError> {
-    let value = get_env_variable_value(format!("{}_{}", prefix, name))?;
-
-    Ok(value.unwrap_or(original))
 }
 
 ////////////////////////////////////////////////////////////
 //                      Private functions
 ////////////////////////////////////////////////////////////
 
-fn get_env_variable_value(environment: String) -> Result<Option<String>, RetryingError> {
+fn get_env_case_insensitive(environment: &String) -> Result<Option<String>, RetryingError> {
     if environment.is_empty() {
         Ok(None)
     } else {
