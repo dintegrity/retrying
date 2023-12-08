@@ -32,6 +32,15 @@ fn main() {
             try_retry_attempts_exponential("try_retry_attempts_exponential").await;
         }
     ));
+
+    std::env::set_var("RETRYING_TEST__STOP__ATTEMPTS", "3");
+    std::env::set_var("RETRYING_TEST__WAIT__FIXED", "2");
+
+    handles.push(async_std::task::spawn(
+        async {
+            try_retry_attempts_fixed_env("try_retry_attempts_fixed_env").await;
+        }
+    ));
   
     for future in handles {
         async_std::task::block_on(future)
@@ -69,3 +78,8 @@ async fn try_retry_attempts_exponential(in_param: &str) -> Result<i32, ParseIntE
     in_param.parse::<i32>()
 }
 
+#[retry(stop=attempts(1000),wait=fixed(1000),env_prefix="RETRYING_TEST")]
+async fn try_retry_attempts_fixed_env(in_param: &str) -> Result<i32, ParseIntError> {
+    println!("{}", in_param);
+    in_param.parse::<i32>()
+}

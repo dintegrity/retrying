@@ -134,7 +134,7 @@ impl RetryConfig {
                         .ok_or_else(|| RetryConfigurationError::from_str("Named value without ident"))
                         .map(|v| v.to_string().to_lowercase())?;
                         let value = name_value.value;                 
-        
+
                         match ident.as_str()  {
                             "stop" => config.stop(value)?,
                             "wait" => config.wait(value)?,
