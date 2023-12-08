@@ -16,22 +16,24 @@ This macros has a lot of configuration options and allows developers to write fa
 :warning: The macros generates code and adds variables with prefix `retrying_` into code. To avoid variable conflicts please don't use variables with this prefix in functions with `retry` macros.
 
 ## Configuration option
+
 * ### Stop
 
 This section describes configuration options that specify when method execution should stop retrying.
 
 | Config option | OS Environments | Default | Description|
 |:---|:---|:---|:---|
-| stop=attempts(`u32`) | {PREFIX}__STOP__ATTEMPTS | std::u32::MAX | Number of retries|
-| stop=delay(`u32`) | {PREFIX}__STOP__DELAY | std::u32::MAX | Retrying period (seconds) ||
+| stop=attempts(`u32`) | {PREFIX}__STOP__ATTEMPTS | - | Number of retries|
+| stop=delay(`f32`) | {PREFIX}__STOP__DELAY | - | Retrying period (seconds) ||
 
 It is possible to combine several _stop_ conditions per method by using the or(`||`) operator. For example, configuration  
 ```rust
-#[retrying::retry(stop=(attempts(10)||delay(60)))]
+#[retrying::retry(stop=(attempts(10)||delay(60.8)))]
 fn my_function(){}
 ```
-means the function should retry 10 times but doesn't make new attempt after 60 seconds.
+means the function should retry 10 times but doesn't make new attempt after 60 seconds.  
 
+If stop configuration is not specified then retry macros makes new attempts until function be finished without Err.  
 
 * ### Wait
 
@@ -39,9 +41,9 @@ This section describes configuration options that specify delay between each att
 
 | Config option | OS Environments | Default | Description |
 | :--- | :--- | :--- | :--- |
-| wait=fixed(`u32`) | {PREFIX}__WAIT__FIXED | 0 | Number of seconds between retries |
-| wait=random(min=`u32`, max=`u32`) | {PREFIX}__WAIT__RANDOM\__(MIN\|MAX) | min=0,max=3600 | Randomly wait _min_ to _max_ seconds between retries |
-| wait=exponential(multiplier=`u32`, min=`u32`, max=`u32`, exp_base=`u32`) | {PREFIX}__WAIT__EXPONENTIAL\__(MULTIPLIER\|MIN\|MAX\|EXP_BASE) | multiplier=1, min=0, max=3600, exp_base=2 | Wait _multiplier_ * _exp_base_^(num of retry - 1) + _min_ seconds between each retry starting with _min_ seconds, then up to _max_ seconds, then _max_ seconds afterwards |
+| wait=fixed(`f32`) | {PREFIX}__WAIT__FIXED | 0 | Number of seconds between retries |
+| wait=random(min=`f32`, max=`f32`) | {PREFIX}__WAIT__RANDOM\__(MIN\|MAX) | min=0,max=3600 | Randomly wait _min_ to _max_ seconds between retries |
+| wait=exponential(multiplier=`f32`, min=`f32`, max=`f32`, exp_base=`u32`) | {PREFIX}__WAIT__EXPONENTIAL\__(MULTIPLIER\|MIN\|MAX\|EXP_BASE) | multiplier=1, min=0, max=3600, exp_base=2 | Wait _multiplier_ * _exp_base_^(num of retry - 1) + _min_ seconds between each retry starting with _min_ seconds, then up to _max_ seconds, then _max_ seconds afterwards |
 
 Only one _wait_ option possible per method.
 
@@ -60,7 +62,7 @@ Only one _retry_ option possible per method.
 ## Using OS environment variables for updating retry configuration
 There are certain list of use cases when retry configuration requires updating configuration values in runtime. For example, It is useful when we need a different number of attempts per environment (dev, prod, stage), systems, unit tests etc.  
 
-Retrying allows overriding macros configuration in runtime using env variables using special configuration option `env_prefix` like  
+Retrying allows overriding macros configuration in runtime using env variables with special configuration option `env_prefix` like  
 ```
 #[retrying::retry(<retry configurations>,env_prefix="test")]
 ```
