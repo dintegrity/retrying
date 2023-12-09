@@ -1,52 +1,38 @@
-use std::{num::ParseIntError, thread::Thread};
 use retrying::retry;
+use std::num::ParseIntError;
 
 #[tokio::main]
-async fn main() {   
-
+async fn main() {
     let mut handles = vec![];
 
-    handles.push(tokio::spawn(
-        async {
-            try_retry_attempts("try_retry_attempts").await;
-        }
-    ));
-    
-    handles.push(tokio::spawn(
-        async {
-            try_retry_duration("try_retry_duration").await;
-        }
-    )); 
-    
-    handles.push(tokio::spawn(
-        async {
-            try_retry_attempts_fixed("try_retry_attempts_fixed").await;
-        }
-    ));
-    handles.push(tokio::spawn(
-        async {
-            try_retry_attempts_random("try_retry_attempts_random").await;
-        }
-    ));    
-    handles.push(tokio::spawn(
-        async {
-            try_retry_attempts_exponential("try_retry_attempts_exponential").await;
-        }
-    ));
+    handles.push(tokio::spawn(async {
+        let _ = try_retry_attempts("try_retry_attempts").await;
+    }));
 
-    std::env::set_var("RETRYING_TEST__STOP__ATTEMPTS", "3");
-    std::env::set_var("RETRYING_TEST__WAIT__FIXED", "2");
+    handles.push(tokio::spawn(async {
+        let _ = try_retry_duration("try_retry_duration").await;
+    }));
 
-    handles.push(tokio::spawn(
-        async {
-            try_retry_attempts_fixed_env("try_retry_attempts_fixed_env").await;
-        }
-    ));
-  
+    handles.push(tokio::spawn(async {
+        let _ = try_retry_attempts_fixed("try_retry_attempts_fixed").await;
+    }));
+    handles.push(tokio::spawn(async {
+        let _ = try_retry_attempts_random("try_retry_attempts_random").await;
+    }));
+    handles.push(tokio::spawn(async {
+        let _ = try_retry_attempts_exponential("try_retry_attempts_exponential").await;
+    }));
+
+    std::env::set_var("MY_METHOD__RETRYING__STOP__ATTEMPTS", "3");
+    std::env::set_var("MY_METHOD__RETRYING__WAIT__FIXED", "2");
+
+    handles.push(tokio::spawn(async {
+        let _ = try_retry_attempts_fixed_env("try_retry_attempts_fixed_env").await;
+    }));
+
     for future in handles {
         let _result = future.await;
     }
-       
 }
 
 #[retry(stop=attempts(2))]
@@ -61,7 +47,7 @@ async fn try_retry_duration(in_param: &str) -> Result<i32, ParseIntError> {
     in_param.parse::<i32>()
 }
 
-#[retry(stop=(attempts(4)||duration(2)),wait=fixed(1))]
+#[retry(stop=(attempts(4)|duration(2)),wait=fixed(1))]
 async fn try_retry_attempts_fixed(in_param: &str) -> Result<i32, ParseIntError> {
     println!("{}", in_param);
     in_param.parse::<i32>()
@@ -79,7 +65,7 @@ async fn try_retry_attempts_exponential(in_param: &str) -> Result<i32, ParseIntE
     in_param.parse::<i32>()
 }
 
-#[retry(stop=attempts(1000),wait=fixed(1000),env_prefix="RETRYING_TEST")]
+#[retry(stop=attempts(1000),wait=fixed(1000),envs_prefix="MY_METHOD")]
 async fn try_retry_attempts_fixed_env(in_param: &str) -> Result<i32, ParseIntError> {
     println!("{}", in_param);
     in_param.parse::<i32>()

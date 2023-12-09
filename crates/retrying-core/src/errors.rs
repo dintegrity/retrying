@@ -12,13 +12,17 @@ impl RetryConfigurationError {
         }
     }
 
-    pub fn from_string(msg: String) -> RetryConfigurationError {
-        RetryConfigurationError { msg: msg }
+    pub fn new(msg: String) -> RetryConfigurationError {
+        RetryConfigurationError { msg }
     }
 }
 
 impl fmt::Display for RetryConfigurationError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Retry failed with error: {}", self.msg)
+        write!(
+            f,
+            "Retrying macros `retry` has incorrect configuration. Error: {}",
+            self.msg
+        )
     }
 }
