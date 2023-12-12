@@ -1,8 +1,12 @@
 # retrying
 
-General-purpose retrying library, written in Rust, to simplify the task of adding retry behavior to rust functions.
-
+General-purpose retrying library, written in Rust, to simplify the task of adding retry behavior to rust functions.  
 Support sync and async ([tokio](https://tokio.rs/), [async-std](https://async.rs/)) functions.
+
+```toml
+[dependencies]
+retrying = "0.1.0"
+```
 
 ## Macros
 
@@ -75,7 +79,7 @@ Example of usage:
 ```rust
 #[retrying::retry(stop=attempts(2), envs_prefix="test")]
 ```
-With above configuration macros checks in runtime the availability of OS env variable TEST__RETRYING__STOP__ATTEMPTS (case-insensitive) and if variable is set then number of retry attempt will be the value of TEST__STOP__ATTEMPTS. If the list of OS environment contains more than one configuration option with the same prefix then macros ignores OS env variable and take configuration value from code.
+With above configuration macros checks in runtime the availability of OS env variable TEST__RETRYING__STOP__ATTEMPTS (case-insensitive) and if variable is set then number of retry attempt will be the value of TEST__RETRYING__STOP__ATTEMPTS. If the list of OS environment contains more than one configuration option with the same prefix then macros ignores OS env variable and take configuration value from code.
 
 ## Features
 tokio - builds retrying library for using with tokio asynchronous runtime.
