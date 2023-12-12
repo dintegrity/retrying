@@ -12,8 +12,8 @@ mod functions;
 ///
 /// ```ignore
 /// #[retry(stop=(attempts(4)|duration(2)),wait=fixed(1))]
-/// fn my_function() -> Result<i32, core::num::ParseIntError> {
-/// "not a i32".parse::<i32>()
+/// fn my_function() -> Result<(),Error> {
+/// .....
 ///}
 /// ```
 #[proc_macro_attribute]
