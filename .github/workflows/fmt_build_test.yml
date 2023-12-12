@@ -10,14 +10,28 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-
+  rust_format:
     runs-on: ubuntu-latest
-
     steps:
     - uses: actions/checkout@v3
     - name: Format
-      run: cargo fmt
+      run: cargo fmt --all -- --check
+#  rust_clippy:
+#    needs: [rust_format]
+#    runs-on: ubuntu-latest
+#    steps:
+#    - uses: actions/checkout@v3
+#    - name: Clippy (default)
+#      run: cargo clippy --all-targets -- -D warnings
+#    - name: Clippy (tokio)
+#      run: cargo clippy --all-targets --features tokio -- -D warnings
+#    - name: Clippy (async_std)
+#      run: cargo clippy --all-targets --features async_std -- -D warnings
+  rust_build_and_test:
+    needs: [rust_format]
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
     - name: Build
       run: cargo build --verbose
     - name: Run tests

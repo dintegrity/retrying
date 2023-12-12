@@ -14,7 +14,7 @@ edition = "2021"
 retrying-core = { path = "../retrying-core" }
 rand = "0.8.5"
 tokio = { version = "1", optional = true, features = ["time"] }
-async-std = { version = "1", optional = true }
+async-std = { version = "1", optional = true, features = ["std"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
