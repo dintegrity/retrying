@@ -36,7 +36,7 @@ fn try_retry_duration(in_param: &str) -> Result<i32, ParseIntError> {
     in_param.parse::<i32>()
 }
 
-#[retry(stop=(attempts(4)|duration(2)),wait=fixed(1))]
+#[retry(stop=(attempts(4)|duration(2)),wait=fixed(0.9))]
 fn try_retry_attempts_fixed(in_param: &str) -> Result<i32, ParseIntError> {
     println!("{}", in_param);
     in_param.parse::<i32>()
@@ -60,7 +60,7 @@ fn try_retry_attempts_fixed_env(in_param: &str) -> Result<i32, ParseIntError> {
     in_param.parse::<i32>()
 }
 
-#[retry(stop=attempts(3),retry=if_errors(::std::num::ParseIntError, ::std::num::ParseIntError))]
+#[retry(stop=attempts(3),retry=if_errors(std::num::ParseIntError, ::std::num::ParseIntError))]
 fn try_retry_if_errors(in_param: &str) -> Result<i32, ParseIntError> {
     println!("{}", in_param);
     in_param.parse::<i32>()

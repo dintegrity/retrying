@@ -1,6 +1,7 @@
 use crate::errors::RetryConfigurationError;
 use proc_macro2::TokenStream;
-use std::fmt;
+use quote::quote;
+use std::fmt::{self, Debug};
 use std::str::FromStr;
 use syn::parse::Parser;
 use syn::punctuated::Punctuated;
@@ -8,6 +9,7 @@ use syn::punctuated::Punctuated;
 // In syn 2.0 AttributeArgs was removed, so now we can use type alias to simplify syntaxis
 type AttributeArgs = syn::punctuated::Punctuated<syn::Meta, syn::Token![,]>;
 
+#[derive(Debug, PartialEq)]
 pub enum WaitConfig {
     Fixed {
         seconds: f32,
@@ -34,6 +36,7 @@ impl WaitConfig {
     const MULTIPLIER: &'static str = "multiplier";
 }
 
+#[derive(Debug, PartialEq)]
 pub(crate) struct StopConfig {
     pub(crate) attempts: Option<u32>,
     pub(crate) duration: Option<f32>,
@@ -43,9 +46,10 @@ impl StopConfig {
     const DURATION: &'static str = "duration";
 }
 
+#[derive(Debug, PartialEq)]
 pub(crate) struct RetryConfig {
-    pub(crate) if_errors: Option<Vec<syn::Path>>,
-    pub(crate) if_not_errors: Option<Vec<syn::Path>>,
+    pub(crate) if_errors: Option<Vec<String>>,
+    pub(crate) if_not_errors: Option<Vec<String>>,
 }
 
 impl RetryConfig {
@@ -53,6 +57,7 @@ impl RetryConfig {
     const IF_NOT_ERRORS: &'static str = "if_not_errors";
 }
 
+#[derive(Debug, PartialEq)]
 pub(crate) struct RetryingConfig {
     pub(crate) stop: Option<StopConfig>,
     pub(crate) wait: Option<WaitConfig>,
@@ -76,6 +81,15 @@ impl RetryingConfig {
     }
 
     fn stop(&mut self, expr: syn::Expr) -> Result<(), RetryConfigurationError> {
+        let parsed_config = Self::parse_stop_config(expr)?;
+
+        if parsed_config.attempts.is_some() || parsed_config.duration.is_some() {
+            self.stop = Some(parsed_config);
+        }
+        Ok(())
+    }
+
+    fn parse_stop_config(expr: syn::Expr) -> Result<StopConfig, RetryConfigurationError> {
         let mut attempts = None;
         let mut duration = None;
         let functions = parse_functions_expr(expr)?;
@@ -88,13 +102,16 @@ impl RetryingConfig {
                     format!("Configuration {} is wrong for `{}`. Possible configuration option is `{}` and `{}`", unknown, RetryingConfig::STOP, StopConfig::ATTEMPTS, StopConfig::DURATION)))
             }
         }
-        if attempts.is_some() || duration.is_some() {
-            self.stop = Some(StopConfig { attempts, duration });
-        }
-        Ok(())
+        Ok(StopConfig { attempts, duration })
     }
 
     fn wait(&mut self, expr: syn::Expr) -> Result<(), RetryConfigurationError> {
+        let parsed_config = Self::parse_wait_config(expr)?;
+        self.wait = Some(parsed_config);
+        Ok(())
+    }
+
+    fn parse_wait_config(expr: syn::Expr) -> Result<WaitConfig, RetryConfigurationError> {
         let ParsedFunction { ident, args } = parse_function_call(expr)?;
         match ident.as_str() {
             WaitConfig::FIXED => {
@@ -105,10 +122,11 @@ impl RetryingConfig {
                         WaitConfig::FIXED
                     )))
                 } else {
-                    self.wait = args.first().map(|x| WaitConfig::Fixed {
-                        seconds: x.value.as_literal::<f32>().unwrap(),
-                    });
-                    Ok(())
+                    let seconds = args
+                        .first()
+                        .map(|x| x.value.parse::<f32>().unwrap())
+                        .unwrap_or(0f32);
+                    Ok(WaitConfig::Fixed { seconds })
                 }
             }
             WaitConfig::RANDOM => {
@@ -117,13 +135,12 @@ impl RetryingConfig {
 
                 for FunctionArgument { ident, value } in args {
                     match ident.unwrap_or(String::new()).as_str() {
-                        WaitConfig::MIN => min = value.as_literal::<f32>()?,
-                        WaitConfig::MAX => max = value.as_literal::<f32>()?,
+                        WaitConfig::MIN => min = value.parse::<f32>()?,
+                        WaitConfig::MAX => max = value.parse::<f32>()?,
                         unknown => return Err(RetryConfigurationError::new(format!("{}={} has wrong configuration {}. Only `{}` and `{}` attributes is possible", RetryingConfig::WAIT, WaitConfig::RANDOM, unknown, WaitConfig::MIN, WaitConfig::MAX))),           
                     }
                 }
-                self.wait = Some(WaitConfig::Random { min, max });
-                Ok(())
+                Ok(WaitConfig::Random { min, max })
             }
             WaitConfig::EXPONENTIAL => {
                 let mut min: f32 = 0.0;
@@ -133,20 +150,20 @@ impl RetryingConfig {
 
                 for FunctionArgument { ident, value } in args {
                     match ident.unwrap_or(String::new()).as_str() {
-                        WaitConfig::MIN => min = value.as_literal::<f32>()?,
-                        WaitConfig::MAX => max = value.as_literal::<f32>()?,
-                        WaitConfig::MULTIPLIER => multiplier = value.as_literal::<f32>()?,
-                        WaitConfig::EXP_BASE => exp_base = value.as_literal::<u32>()?,
+                        WaitConfig::MIN => min = value.parse::<f32>()?,
+                        WaitConfig::MAX => max = value.parse::<f32>()?,
+                        WaitConfig::MULTIPLIER => multiplier = value.parse::<f32>()?,
+                        WaitConfig::EXP_BASE => exp_base = value.parse::<u32>()?,
                         unknown => return Err(RetryConfigurationError::new(format!("{}={} has wrong configuration option `{}`. Only `{}`, `{}`, `{}` and `{}` attributes is possible", RetryingConfig::WAIT, WaitConfig::EXPONENTIAL, unknown, WaitConfig::MIN, WaitConfig::MAX, WaitConfig::EXPONENTIAL, WaitConfig::EXP_BASE))),
                     }
                 }
-                self.wait = Some(WaitConfig::Exponential {
+
+                Ok(WaitConfig::Exponential {
                     multiplier,
                     min,
                     max,
                     exp_base,
-                });
-                Ok(())
+                })
             }
             unknown => Err(RetryConfigurationError::new(format!(
                 "Configuration {} is wrong for `{}`. Possible configuration is `{}`, `{}` and `{}`",
@@ -160,16 +177,23 @@ impl RetryingConfig {
     }
 
     fn retry(&mut self, expr: syn::Expr) -> Result<(), RetryConfigurationError> {
-        let mut if_errors: Option<Vec<syn::Path>> = None;
-        let mut if_not_errors: Option<Vec<syn::Path>> = None;
+        let parsed_config = Self::parse_retry_config(expr)?;
+        self.retry = Some(parsed_config);
+        Ok(())
+    }
+
+    fn parse_retry_config(expr: syn::Expr) -> Result<RetryConfig, RetryConfigurationError> {
+        let mut if_errors: Option<Vec<String>> = None;
+        let mut if_not_errors: Option<Vec<String>> = None;
 
         let functions = parse_functions_expr(expr)?;
 
         for func in functions {
+            let parsed_args = func.args.iter().map(|a| a.value.parse().unwrap()).collect();
             if !func.args.is_empty() {
                 match func.ident.as_str() {
-                    RetryConfig::IF_ERRORS => if_errors = Some(func.args.iter().map(|a|a.value.as_path().unwrap()).collect()),
-                    RetryConfig::IF_NOT_ERRORS => if_not_errors = Some(func.args.iter().map(|a|a.value.as_path().unwrap()).collect()),
+                    RetryConfig::IF_ERRORS => if_errors = Some(parsed_args),
+                    RetryConfig::IF_NOT_ERRORS => if_not_errors = Some(parsed_args),
                     unknown => return Err(RetryConfigurationError::new(format!("Configuration {} is wrong for `{}`. Possible configuration option is `{}` and `{}`", unknown, RetryingConfig::RETRY, RetryConfig::IF_ERRORS, RetryConfig::IF_NOT_ERRORS)))
                 }
             }
@@ -178,45 +202,43 @@ impl RetryingConfig {
         if if_errors.is_some() && if_not_errors.is_some() {
             Err(RetryConfigurationError::new(format!("Configuration is wrong for `{}`. Only one of `{}` and `{}` should be configured at the same time", RetryingConfig::RETRY, RetryConfig::IF_ERRORS, RetryConfig::IF_NOT_ERRORS)))
         } else {
-            self.retry = Some(RetryConfig {
+            Ok(RetryConfig {
                 if_errors,
                 if_not_errors,
-            });
-            Ok(())
+            })
         }
     }
 
     fn envs_prefix(&mut self, expr: syn::Expr) -> Result<(), RetryConfigurationError> {
-        let value = match expr {
-            syn::Expr::Lit(syn::ExprLit { lit, .. }) => parse_lit(&lit),
+        let parsed_config = Self::parse_envs_prefix_config(expr)?;
+
+        self.envs_prefix = Some(parsed_config);
+        Ok(())
+    }
+
+    fn parse_envs_prefix_config(expr: syn::Expr) -> Result<String, RetryConfigurationError> {
+        match parse_value(expr) {
+            Ok(ParsedValue::ParsedString(v)) => Ok(v),
             _ => Err(RetryConfigurationError::new(format!(
                 "`{}` value should be string literal (for exampe `envs_prefix=\"retry\"`)",
                 RetryingConfig::ENVS_PREFIX
             ))),
-        }?;
-
-        self.envs_prefix = Some(value.to_string());
-        Ok(())
+        }
     }
 
     pub(crate) fn from_token_stream(
         args: TokenStream,
     ) -> Result<RetryingConfig, RetryConfigurationError> {
-        if args.is_empty() {
-            Ok(RetryingConfig::new())
-        } else {
-            let args = AttributeArgs::parse_terminated.parse2(args).or(Err(
-                RetryConfigurationError::from_str(
-                    "Can't parse comma delimeted retry configuration",
-                ),
-            ))?;
+        let mut config = RetryingConfig::new();
 
-            let mut config = RetryingConfig::new();
+        let args = AttributeArgs::parse_terminated.parse2(args).or(Err(
+            RetryConfigurationError::from_str("Can't parse comma delimeted retry configuration"),
+        ))?;
 
-            for arg in args {
-                match arg {
+        for arg in args {
+            match arg {
                     syn::Meta::NameValue(name_value) => {
-                        let ident = &name_value
+                        let ident = name_value
                             .path
                             .get_ident()
                             .ok_or_else(|| {
@@ -239,18 +261,18 @@ impl RetryingConfig {
                         ))
                     }
                 }
-            }
-            Ok(config)
         }
+        Ok(config)
     }
 }
 
+#[derive(Debug, PartialEq)]
 enum ParsedValue {
     ParsedInt(u32),
     ParsedString(String),
     ParsedBool(bool),
     ParseFloat(f32),
-    ParsedPath(syn::Path),
+    ParsedPath(String),
 }
 
 impl fmt::Display for ParsedValue {
@@ -260,50 +282,26 @@ impl fmt::Display for ParsedValue {
             ParsedValue::ParsedString(v) => write!(f, "{v}"),
             ParsedValue::ParsedBool(v) => write!(f, "{v}"),
             ParsedValue::ParseFloat(v) => write!(f, "{v}"),
-            ParsedValue::ParsedPath(syn::Path {
-                leading_colon,
-                segments,
-            }) => {
-                let leading_colon = leading_colon.map_or("", |_| "::");
-                let segments = segments
-                    .iter()
-                    .map(|x| x.ident.to_string())
-                    .collect::<Vec<String>>()
-                    .join("::");
-                write!(f, "{leading_colon}{segments}")
-            }
+            ParsedValue::ParsedPath(v) => write!(f, "{v}"),
         }
     }
 }
 
 impl ParsedValue {
-    fn as_path(&self) -> Result<syn::Path, RetryConfigurationError> {
-        match self {
-            ParsedValue::ParsedPath(x) => Ok(x.clone()),
-            _ => Err(RetryConfigurationError::from_str(
-                "`as_path` can be used only with ParsedValue::ParsedPath. To get value of other ParsedValues please use `as_literal` ",
-            )),
-        }
-    }
-
-    fn as_literal<T: FromStr>(&self) -> Result<T, RetryConfigurationError> {
-        match self {
-            ParsedValue::ParsedPath(_) => Err(RetryConfigurationError::from_str(
-                "ParsedPath can't be casted to literal. Use `as_path` method to get syn::Path value",
-            )),
-            _ => self
-                .to_string()
-                .parse::<T>()
-                .map_err(|_| RetryConfigurationError::from_str("Failed cast to literal")),
-        }
+    fn parse<T: FromStr>(&self) -> Result<T, RetryConfigurationError> {
+        self.to_string()
+            .parse::<T>()
+            .map_err(|_| RetryConfigurationError::from_str("Failed cast to literal"))
     }
 }
 
+#[derive(Debug, PartialEq)]
 struct FunctionArgument {
     ident: Option<String>,
     value: ParsedValue,
 }
 
+#[derive(Debug, PartialEq)]
 struct ParsedFunction {
     ident: String,
     args: Vec<FunctionArgument>,
@@ -382,10 +380,33 @@ fn parse_function_arguments(
 
 fn parse_value(expr: syn::Expr) -> Result<ParsedValue, RetryConfigurationError> {
     match expr {
-        syn::Expr::Path(syn::ExprPath { path, .. }) => Ok(ParsedValue::ParsedPath(path)),
-        syn::Expr::Lit(syn::ExprLit { lit, .. }) => parse_lit(&lit),
+        syn::Expr::Path(syn::ExprPath { path, .. }) => {
+            Ok(ParsedValue::ParsedPath(quote!(#path).to_string()))
+        }
+        syn::Expr::Lit(syn::ExprLit { lit, .. }) => match lit {
+            syn::Lit::Int(lit) => match lit.base10_parse::<u32>() {
+                Ok(value) => Ok(ParsedValue::ParsedInt(value)),
+                Err(e) => Err(RetryConfigurationError::new(format!(
+                    "Failed to parse LitInt to `u32`. Error: {}",
+                    e
+                ))),
+            },
+            syn::Lit::Str(s) => Ok(ParsedValue::ParsedString(s.value())),
+            syn::Lit::Verbatim(s) => Ok(ParsedValue::ParsedString(s.to_string())),
+            syn::Lit::Bool(b) => Ok(ParsedValue::ParsedBool(b.value)),
+            syn::Lit::Float(b) => match b.base10_parse::<f32>() {
+                Ok(value) => Ok(ParsedValue::ParseFloat(value)),
+                Err(e) => Err(RetryConfigurationError::new(format!(
+                    "Failed to parse LitFloat to f32. Error: {}",
+                    e
+                ))),
+            },
+            _ => Err(RetryConfigurationError::from_str(
+                "Unsupported literal. Currently supported only Int, Str, Verbatim, Bool and Float",
+            )),
+        },
         _ => Err(RetryConfigurationError::from_str(
-            "Incorrect value. Supported values are syn::Expr::Lit and syn::Expr::Path",
+            "Unsupported value. Currently supported only Path, Int, Str, Verbatim, Bool and Float",
         )),
     }
 }
@@ -395,34 +416,246 @@ fn parse_ident(expr: syn::Expr) -> Result<String, RetryConfigurationError> {
         syn::Expr::Path(syn::ExprPath { path, .. }) => path
             .get_ident()
             .ok_or_else(|| RetryConfigurationError::from_str("Named value without ident"))
-            .map(|v| v.to_string().to_lowercase()),
+            .map(|v| v.to_string()),
         _ => Err(RetryConfigurationError::from_str(
             "Incorrect expression in parse_ident",
         )),
     }
 }
 
-fn parse_lit(lit: &syn::Lit) -> Result<ParsedValue, RetryConfigurationError> {
-    match lit {
-        syn::Lit::Int(lit) => match lit.base10_parse::<u32>() {
-            Ok(value) => Ok(ParsedValue::ParsedInt(value)),
-            Err(e) => Err(RetryConfigurationError::new(format!(
-                "Failed to parse LitInt to `u32`. Error: {}",
-                e
-            ))),
-        },
-        syn::Lit::Str(s) => Ok(ParsedValue::ParsedString(s.value())),
-        syn::Lit::Verbatim(s) => Ok(ParsedValue::ParsedString(s.to_string())),
-        syn::Lit::Bool(b) => Ok(ParsedValue::ParsedBool(b.value)),
-        syn::Lit::Float(b) => match b.base10_parse::<f32>() {
-            Ok(value) => Ok(ParsedValue::ParseFloat(value)),
-            Err(e) => Err(RetryConfigurationError::new(format!(
-                "Failed to parse LitFloat to f32. Error: {}",
-                e
-            ))),
-        },
-        _ => Err(RetryConfigurationError::from_str(
-            "Unsupported literal. Currently supported only Int, Str, Verbatim, Bool and Float",
-        )),
+#[cfg(test)]
+mod tests {
+    use crate::config::*;
+    use quote::quote;
+    use std::vec;
+
+    #[test]
+    fn test_parse_stop_config() {
+        let mut config = RetryingConfig::new();
+        config.stop(syn::parse_quote!(attempts(5))).unwrap();
+
+        assert_eq!(
+            config.stop,
+            Some(StopConfig {
+                attempts: Some(5),
+                duration: None
+            })
+        );
+
+        config.stop(syn::parse_quote!(duration(0.5))).unwrap();
+        assert_eq!(
+            config.stop,
+            Some(StopConfig {
+                attempts: None,
+                duration: Some(0.5)
+            })
+        );
+
+        config
+            .stop(syn::parse_quote!((attempts(5) | duration(0.5))))
+            .unwrap();
+        assert_eq!(
+            config.stop,
+            Some(StopConfig {
+                attempts: Some(5),
+                duration: Some(0.5)
+            })
+        );
+    }
+
+    #[test]
+    fn test_parse_wait_config() {
+        let mut config = RetryingConfig::new();
+
+        config.wait(syn::parse_quote!(fixed(4.4))).unwrap();
+        assert_eq!(config.wait, Some(WaitConfig::Fixed { seconds: 4.4 }));
+
+        config
+            .wait(syn::parse_quote!(random(min = 0.4, max = 1.5)))
+            .unwrap();
+        assert_eq!(config.wait, Some(WaitConfig::Random { min: 0.4, max: 1.5 }));
+
+        config
+            .wait(syn::parse_quote!(exponential(
+                min = 0.4,
+                max = 1.5,
+                multiplier = 1.2,
+                exp_base = 2
+            )))
+            .unwrap();
+        assert_eq!(
+            config.wait,
+            Some(WaitConfig::Exponential {
+                multiplier: 1.2,
+                min: 0.4,
+                max: 1.5,
+                exp_base: 2
+            })
+        );
+    }
+
+    #[test]
+    fn test_parse_retry_config() {
+        let mut config = RetryingConfig::new();
+
+        config
+            .retry(syn::parse_quote!(if_errors(
+                syn::Err,
+                ::std::num::ParseIntError
+            )))
+            .unwrap();
+        assert_eq!(
+            config.retry,
+            Some(RetryConfig {
+                if_errors: Some(vec![
+                    "syn :: Err".to_string(),
+                    ":: std :: num :: ParseIntError".to_string()
+                ]),
+                if_not_errors: None
+            })
+        );
+
+        config
+            .retry(syn::parse_quote!(if_not_errors(
+                syn::Err,
+                ::std::num::ParseIntError
+            )))
+            .unwrap();
+        assert_eq!(
+            config.retry,
+            Some(RetryConfig {
+                if_errors: None,
+                if_not_errors: Some(vec![
+                    "syn :: Err".to_string(),
+                    ":: std :: num :: ParseIntError".to_string()
+                ])
+            })
+        );
+    }
+
+    #[test]
+    fn test_parse_envs_prefix_config() {
+        let mut config = RetryingConfig::new();
+
+        config.envs_prefix(syn::parse_quote!("TEST")).unwrap();
+        assert_eq!(config.envs_prefix, Some("TEST".to_string()));
+    }
+
+    #[test]
+    fn test_from_token_stream() {
+        let token_stream = quote!(
+            stop = (attempts(1) | duration(5.5)),
+            wait = fixed(0.5),
+            retry = if_errors(::syn::Error, ::std::num::ParseIntError),
+            envs_prefix = "TEST"
+        );
+
+        let expected = RetryingConfig {
+            stop: Some(StopConfig {
+                attempts: Some(1),
+                duration: Some(5.5),
+            }),
+            wait: Some(WaitConfig::Fixed { seconds: 0.5 }),
+            retry: Some(RetryConfig {
+                if_errors: Some(vec![
+                    ":: syn :: Error".to_string(),
+                    ":: std :: num :: ParseIntError".to_string(),
+                ]),
+                if_not_errors: None,
+            }),
+            envs_prefix: Some(String::from("TEST")),
+        };
+
+        let result = RetryingConfig::from_token_stream(token_stream).unwrap();
+
+        assert_eq!(result, expected);
+
+        let result = RetryingConfig::from_token_stream(quote!()).unwrap();
+        assert_eq!(result, RetryingConfig::new());
+    }
+
+    #[test]
+    fn test_parse_functions_expr() {
+        let expected = vec![
+            ParsedFunction {
+                ident: String::from("function1"),
+                args: vec![FunctionArgument {
+                    ident: None,
+                    value: ParsedValue::ParsedInt(1),
+                }],
+            },
+            ParsedFunction {
+                ident: String::from("function2"),
+                args: vec![FunctionArgument {
+                    ident: Some(String::from("test")),
+                    value: ParsedValue::ParseFloat(5.5),
+                }],
+            },
+        ];
+        let result =
+            parse_functions_expr(syn::parse_quote!((function1(1) | function2(test = 5.5))))
+                .unwrap();
+
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_parse_function_call() {
+        let expected = ParsedFunction {
+            ident: String::from("function1"),
+            args: vec![
+                FunctionArgument {
+                    ident: None,
+                    value: ParsedValue::ParsedInt(1),
+                },
+                FunctionArgument {
+                    ident: Some(String::from("test")),
+                    value: ParsedValue::ParseFloat(2.4),
+                },
+            ],
+        };
+        let result = parse_function_call(syn::parse_quote!(function1(1, test = 2.4))).unwrap();
+
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_parse_function_arguments() {
+        let expected = vec![FunctionArgument {
+            ident: Some("x".to_string()),
+            value: ParsedValue::ParsedInt(1),
+        }];
+        let result = parse_function_arguments(syn::parse_quote!(x = 1)).unwrap();
+
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_parse_value() {
+        let expected = ParsedValue::ParsedPath("std :: mem :: replace".to_string());
+        let result = parse_value(syn::parse_quote!(std::mem::replace)).unwrap();
+        assert_eq!(expected, result);
+
+        let expected = ParsedValue::ParsedInt(1);
+        let result = parse_value(syn::parse_quote!(1)).unwrap();
+        assert_eq!(expected, result);
+
+        let expected = ParsedValue::ParseFloat(1.5);
+        let result = parse_value(syn::parse_quote!(1.5)).unwrap();
+        assert_eq!(expected, result);
+
+        let expected = ParsedValue::ParsedBool(false);
+        let result = parse_value(syn::parse_quote!(false)).unwrap();
+        assert_eq!(expected, result);
+
+        let expected = ParsedValue::ParsedString("test".to_string());
+        let result = parse_value(syn::parse_quote!("test")).unwrap();
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_parse_incorrect_value() {
+        parse_value(syn::parse_quote!(let sd = s)).unwrap();
     }
 }
