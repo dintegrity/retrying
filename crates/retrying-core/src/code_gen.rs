@@ -7,19 +7,20 @@ pub(crate) fn add_retry_code_into_function(
     function: ItemFn,
     config: RetryingConfig,
 ) -> TokenStream {
-    let function_signature = function.sig.clone();
-
     let ItemFn {
-        attrs, vis, block, ..
+        attrs,
+        vis,
+        sig,
+        block,
+        ..
     } = function;
 
     let Signature {
-        output: return_type,
-        inputs: params,
-        unsafety,
-        asyncness,
         constness,
+        asyncness,
+        unsafety,
         abi,
+        fn_token,
         ident,
         generics:
             syn::Generics {
@@ -27,8 +28,12 @@ pub(crate) fn add_retry_code_into_function(
                 where_clause,
                 ..
             },
+        paren_token: _,
+        inputs: params,
+        variadic,
+        output: return_type,
         ..
-    } = function_signature;
+    } = sig;
 
     let RetryingConfig {
         stop,
@@ -38,209 +43,404 @@ pub(crate) fn add_retry_code_into_function(
         ..
     } = config;
 
-    let mut retrying_variables = quote!(let mut retrying_retry_attempt=1u32;);
-    let retrying_end_of_loop_cycle = quote!(retrying_retry_attempt+=1u32;);
+    let let_retrying_stop = stop.map_or(quote!(), |s| {
+        let stop = prepare_stop(s, envs_prefix.clone());
+        quote!(
+            use ::retrying::stop::Stop;
+            let retrying_stop = #stop;
+        )
+    });
 
-    let mut stop_check = quote!(true);
-
-    if let Some(StopConfig { attempts, duration }) = stop {
-        if let Some(config_attempts) = attempts {
-            match &envs_prefix {
-                Some(prefix) => {
-                    retrying_variables = quote!(
-                        #retrying_variables
-                        let retrying_stop_attempts = ::retrying::override_by_env::<u32>(#config_attempts, #prefix, ::retrying::envs::RETRYING_STOP_ATTEMPTS);
-                    );
-                    stop_check = quote!((retrying_retry_attempt <= retrying_stop_attempts))
-                }
-                None => stop_check = quote!((retrying_retry_attempt <= #config_attempts)),
-            }
-        };
-
-        if let Some(config_duration) = duration {
-            if !stop_check.is_empty() {
-                stop_check = quote!(#stop_check &&);
-            }
-
-            match &envs_prefix {
-                Some(prefix) => {
-                    retrying_variables = quote!(
-                        #retrying_variables
-                        let retrying_stop_duration = ::retrying::override_by_env::<f32>(#config_duration, #prefix, ::retrying::envs::RETRYING_STOP_DURATION);
-                        let retrying_stop_duration_startime = ::std::time::SystemTime::now();
-                    );
-                    stop_check = quote!(#stop_check (::std::time::SystemTime::now().duration_since(retrying_stop_duration_startime).unwrap().as_secs_f32() < retrying_stop_duration));
-                }
-                None => {
-                    retrying_variables = quote!(
-                        #retrying_variables
-                        let retrying_stop_duration_startime = ::std::time::SystemTime::now();
-                    );
-                    stop_check = quote!(#stop_check (::std::time::SystemTime::now().duration_since(retrying_stop_duration_startime).unwrap().as_secs_f32() < #config_duration));
-                }
-            }
-        };
+    let retrying_stop_check = if let_retrying_stop.is_empty() {
+        quote!(true)
+    } else {
+        quote!(!retrying_stop.stop_execution(&retrying_context))
     };
 
-    let mut wait_code = quote!();
+    let let_retrying_wait = wait.map_or(quote!(), |w| {
+        let wait = prepare_wait(w, envs_prefix.clone());
+        quote!(
+            use ::retrying::wait::Wait;
+            let retrying_wait = #wait;
+        )
+    });
 
-    if let Some(wait_config) = wait {
-        let mut wait_duration_calc = quote!();
+    let retrying_wait = if !let_retrying_wait.is_empty() && asyncness.is_some() {
+        quote!(::retrying::sleep_async(retrying_wait.wait_duration(&retrying_context)).await;)
+    } else if !let_retrying_wait.is_empty() && asyncness.is_none() {
+        quote!(::retrying::sleep_sync(retrying_wait.wait_duration(&retrying_context));)
+    } else {
+        quote!()
+    };
 
-        match wait_config {
-            WaitConfig::Fixed { seconds } => {
-                match &envs_prefix {
-                    Some(prefix) => {
-                        retrying_variables = quote!(
-                            #retrying_variables
-                            let retrying_wait_duration=::retrying::override_by_env::<f32>(#seconds, #prefix, ::retrying::envs::RETRYING_WAIT_FIXED);
-                        )
-                    }
-                    None => {
-                        retrying_variables = quote!(
-                            #retrying_variables
-                            let retrying_wait_duration=#seconds;
-                        )
-                    }
-                };
+    let retry_err_check = retry.map_or(quote!(), prepare_retry);
+
+    quote!(
+    #(#attrs) *
+    #vis #constness #unsafety #asyncness #abi #fn_token #ident<#gen_params>(#params #variadic) #return_type
+    #where_clause
+    {
+        let mut retrying_context = ::retrying::RetryingContext::new();
+        #let_retrying_stop
+        #let_retrying_wait
+
+        loop {
+            match #block {
+                Ok(result) => return Ok(result),
+                Err(err) if #retrying_stop_check => {
+                    #retry_err_check
+                    retrying_context.add_attempt();
+                    #retrying_wait
+                },
+                Err(err) => break Err(err)
             }
-            WaitConfig::Random { min, max } => match &envs_prefix {
-                Some(prefix) => {
-                    retrying_variables = quote!(
-                        #retrying_variables
-                        let retrying_wait_random_min=::retrying::override_by_env::<f32>(#min, #prefix, ::retrying::envs::RETRYING_WAIT_RANDOM_MIN);
-                        let retrying_wait_random_max=::retrying::override_by_env::<f32>(#max, #prefix, ::retrying::envs::RETRYING_WAIT_RANDOM_MAX);
-                        let mut retrying_wait_duration=0f32;
-                    );
-                    wait_duration_calc = quote!(
-                        retrying_wait_duration = {
-                            use ::retrying::rand::Rng;
-                            let mut retrying_wait_random_rng = ::retrying::rand::thread_rng();
-                            retrying_wait_random_rng.gen_range(retrying_wait_random_min..=retrying_wait_random_max) as f32
-                        };
-                    )
-                }
-                None => {
-                    retrying_variables = quote!(
-                        #retrying_variables
-                        let mut retrying_wait_duration=0f32;
-                    );
-                    wait_duration_calc = quote!(
-                        retrying_wait_duration = {
-                            use ::retrying::rand::Rng;
-                            let mut retrying_wait_random_rng = ::retrying::rand::thread_rng();
-                            retrying_wait_random_rng.gen_range(#min..=#max) as f32
-                        };
-                    )
-                }
-            },
+        }
+    })
+}
+
+fn prepare_stop(config: StopConfig, envs_prefix: Option<String>) -> TokenStream {
+    let StopConfig { attempts, duration } = config;
+
+    match (envs_prefix, attempts, duration) {
+        (Some(prefix), Some(attempts), None) => {
+            quote!(::retrying::stop::StopAttempts::new(::retrying::override_by_env::<u32>(#attempts, #prefix, ::retrying::envs::RETRYING_STOP_ATTEMPTS)))
+        }
+        (Some(prefix), None, Some(duration)) => {
+            quote!(::retrying::stop::StopDuration::new(::retrying::override_by_env::<f32>(#duration, #prefix, ::retrying::envs::RETRYING_STOP_DURATION)))
+        }
+        (Some(prefix), Some(attempts), Some(duration)) => {
+            quote!(::retrying::stop::StopAttemptsOrDuration::new(
+                    ::retrying::override_by_env::<u32>(#attempts, #prefix, ::retrying::envs::RETRYING_STOP_ATTEMPTS),
+                    ::retrying::override_by_env::<f32>(#duration, #prefix, ::retrying::envs::RETRYING_STOP_DURATION)
+                )
+            )
+        }
+        (None, Some(attempts), None) => {
+            quote!(::retrying::stop::StopAttempts::new(#attempts))
+        }
+        (None, None, Some(duration)) => {
+            quote!(::retrying::stop::StopDuration::new(#duration))
+        }
+        (None, Some(attempts), Some(duration)) => {
+            quote!(::retrying::stop::StopAttemptsOrDuration::new(#attempts, #duration))
+        }
+        _ => quote!(::retrying::stop::StopNever {}),
+    }
+}
+
+fn prepare_wait(config: WaitConfig, envs_prefix: Option<String>) -> TokenStream {
+    match (config, envs_prefix) {
+        (WaitConfig::Fixed { seconds }, Some(prefix)) => {
+            quote!(::retrying::wait::WaitFixed::new(::retrying::override_by_env::<f32>(#seconds, #prefix, ::retrying::envs::RETRYING_WAIT_FIXED)))
+        }
+        (WaitConfig::Fixed { seconds }, None) => quote!(::retrying::wait::WaitFixed::new(#seconds)),
+
+        (WaitConfig::Random { min, max }, Some(prefix)) => {
+            quote!(::retrying::wait::WaitRandom::new(
+                ::retrying::override_by_env::<f32>(#min, #prefix, ::retrying::envs::RETRYING_WAIT_RANDOM_MIN),
+                ::retrying::override_by_env::<f32>(#max, #prefix, ::retrying::envs::RETRYING_WAIT_RANDOM_MAX)
+            ))
+        }
+        (WaitConfig::Random { min, max }, None) => {
+            quote!(::retrying::wait::WaitRandom::new(#min, #max))
+        }
+        (
             WaitConfig::Exponential {
                 multiplier,
                 min,
                 max,
                 exp_base,
-            } => {
-                match &envs_prefix {
-                    Some(prefix) => {
-                        retrying_variables = quote!(
-                            #retrying_variables
-                            let retrying_wait_exponential_multiplier=::retrying::override_by_env::<f32>(#multiplier, #prefix, ::retrying::envs::RETRYING_WAIT_EXPONENTIAL_MULTIPLIER);
-                            let retrying_wait_exponential_min=::retrying::override_by_env::<f32>(#min, #prefix, ::retrying::envs::RETRYING_WAIT_EXPONENTIAL_MIN);
-                            let retrying_wait_exponential_max=::retrying::override_by_env::<f32>(#max, #prefix, ::retrying::envs::RETRYING_WAIT_EXPONENTIAL_MAX);
-                            let retrying_wait_exponential_exp_base=::retrying::override_by_env::<u32>(#exp_base, #prefix, ::retrying::envs::RETRYING_WAIT_EXPONENTIAL_EXP_BASE);
-                            let mut retrying_wait_duration=0f32;
-                        );
-                        wait_duration_calc = quote!(
-                            retrying_wait_duration = retrying_wait_exponential_max.min(retrying_wait_exponential_multiplier * (retrying_wait_exponential_exp_base.powf(retrying_retry_attempt - 1) as f32) + retrying_wait_exponential_min);
-                        )
-                    }
-                    None => {
-                        retrying_variables = quote!(
-                            #retrying_variables
-                            let mut retrying_wait_duration=0f32;
-                        );
-
-                        wait_duration_calc = quote!(
-                            retrying_wait_duration = #max.min(#multiplier * (#exp_base.pow(retrying_retry_attempt - 1) as f32) + #min);
-                        )
-                    }
-                };
-            }
-        };
-
-        if asyncness.is_some() {
-            wait_code = quote!(#wait_duration_calc
-                println!("Async wait {} seconds", retrying_wait_duration);
-                ::retrying::sleep_async(::retrying::Duration::from_secs_f32(retrying_wait_duration)).await;
-            );
-        } else {
-            wait_code = quote!(#wait_duration_calc
-                println!("Sync wait {} seconds", retrying_wait_duration);
-                ::retrying::sleep_sync(::retrying::Duration::from_secs_f32(retrying_wait_duration));
-            );
-        }
+            },
+            Some(prefix),
+        ) => quote!(::retrying::wait::WaitExponential::new(
+            ::retrying::override_by_env::<f32>(#multiplier, #prefix, ::retrying::envs::RETRYING_WAIT_EXPONENTIAL_MULTIPLIER),
+            ::retrying::override_by_env::<f32>(#min, #prefix, ::retrying::envs::RETRYING_WAIT_EXPONENTIAL_MIN),
+            ::retrying::override_by_env::<f32>(#max, #prefix, ::retrying::envs::RETRYING_WAIT_EXPONENTIAL_MAX),
+            ::retrying::override_by_env::<u32>(#exp_base, #prefix, ::retrying::envs::RETRYING_WAIT_EXPONENTIAL_EXP_BASE)
+        )),
+        (
+            WaitConfig::Exponential {
+                multiplier,
+                min,
+                max,
+                exp_base,
+            },
+            None,
+        ) => quote!(::retrying::wait::WaitExponential::new(#multiplier, #min, #max, #exp_base)),
     }
+}
 
-    let mut retry_err_check = quote!();
-
-    if let Some(RetryConfig {
+fn prepare_retry(config: RetryConfig) -> TokenStream {
+    let RetryConfig {
         if_errors,
         if_not_errors,
-    }) = retry
-    {
-        if let Some(configured_errors) = if_errors {
-            let mut errors_check = quote!();
-            for err in configured_errors {
-                if errors_check.is_empty() {
-                    errors_check = quote!(#err {..});
-                } else {
-                    errors_check = quote!(#errors_check | #err {..});
-                }
-            }
+    } = config;
 
-            retry_err_check = quote!(
+    let if_error_check = if_errors.is_some();
+
+    if let Some(errors) = if_errors.or(if_not_errors) {
+        let errors_check = errors
+            .iter()
+            .map(|t| {
+                let tkn: TokenStream = syn::parse_str(t.as_str()).unwrap();
+                quote!(#tkn {..})
+            })
+            .reduce(|acc: TokenStream, v: TokenStream| quote!(#acc | #v));
+
+        if if_error_check {
+            quote!(
                 match err {
                     #errors_check => (),
                     _ => break Err(err)
                 };
             )
-        } else if let Some(configured_errors) = if_not_errors {
-            let mut errors_check = quote!();
-            for err in configured_errors {
-                if errors_check.is_empty() {
-                    errors_check = quote!(#err {..});
-                } else {
-                    errors_check = quote!(#errors_check | #err {..});
-                }
-            }
-
-            retry_err_check = quote!(
+        } else {
+            quote!(
                 match err {
                     #errors_check => break Err(err),
                     _ => ()
                 };
             )
         }
-    };
+    } else {
+        quote!()
+    }
+}
 
-    quote!(
-    #(#attrs) *
-    #vis #constness #unsafety #asyncness #abi fn #ident<#gen_params>(#params) #return_type
-    #where_clause
-    {
-        #retrying_variables
+#[cfg(test)]
+mod tests {
+    use crate::code_gen::*;
 
-        loop {
-            match #block {
-                Ok(result) => return Ok(result),
-                Err(err) if #stop_check => {
-                    #retry_err_check
-                    println!("New attempt");
-                    #wait_code
-                },
-                Err(err) => break Err(err)
+    #[test]
+    fn test_prepare_stop() {
+        let result = prepare_stop(
+            StopConfig {
+                attempts: Some(1),
+                duration: None,
+            },
+            None,
+        );
+        assert_eq!(
+            result.to_string(),
+            ":: retrying :: stop :: StopAttempts :: new (1u32)"
+        );
+
+        let result = prepare_stop(
+            StopConfig {
+                attempts: Some(1),
+                duration: None,
+            },
+            Some("TEST".to_string()),
+        );
+        assert_eq!(result.to_string(), ":: retrying :: stop :: StopAttempts :: new (:: retrying :: override_by_env :: < u32 > (1u32 , \"TEST\" , :: retrying :: envs :: RETRYING_STOP_ATTEMPTS))");
+
+        let result = prepare_stop(
+            StopConfig {
+                attempts: None,
+                duration: Some(1.5),
+            },
+            None,
+        );
+        assert_eq!(
+            result.to_string(),
+            ":: retrying :: stop :: StopDuration :: new (1.5f32)"
+        );
+
+        let result = prepare_stop(
+            StopConfig {
+                attempts: None,
+                duration: Some(1.5),
+            },
+            Some("TEST".to_string()),
+        );
+        assert_eq!(result.to_string(), ":: retrying :: stop :: StopDuration :: new (:: retrying :: override_by_env :: < f32 > (1.5f32 , \"TEST\" , :: retrying :: envs :: RETRYING_STOP_DURATION))");
+
+        let result = prepare_stop(
+            StopConfig {
+                attempts: Some(1),
+                duration: Some(0.5),
+            },
+            None,
+        );
+        assert_eq!(
+            result.to_string(),
+            ":: retrying :: stop :: StopAttemptsOrDuration :: new (1u32 , 0.5f32)"
+        );
+
+        let result = prepare_stop(
+            StopConfig {
+                attempts: Some(1),
+                duration: Some(0.5),
+            },
+            Some("TEST".to_string()),
+        );
+        assert_eq!(result.to_string(), ":: retrying :: stop :: StopAttemptsOrDuration :: new (\
+            :: retrying :: override_by_env :: < u32 > (1u32 , \"TEST\" , :: retrying :: envs :: RETRYING_STOP_ATTEMPTS) , \
+            :: retrying :: override_by_env :: < f32 > (0.5f32 , \"TEST\" , :: retrying :: envs :: RETRYING_STOP_DURATION))");
+    }
+
+    #[test]
+    fn test_prepare_wait() {
+        let result = prepare_wait(WaitConfig::Fixed { seconds: 0.5 }, None);
+        assert_eq!(
+            result.to_string(),
+            ":: retrying :: wait :: WaitFixed :: new (0.5f32)"
+        );
+
+        let result = prepare_wait(WaitConfig::Fixed { seconds: 0.5 }, Some("TEST".to_string()));
+        assert_eq!(result.to_string(), ":: retrying :: wait :: WaitFixed :: new (:: retrying :: override_by_env :: < f32 > (0.5f32 , \"TEST\" , :: retrying :: envs :: RETRYING_WAIT_FIXED))");
+
+        let result = prepare_wait(
+            WaitConfig::Random {
+                min: 0.1,
+                max: 100.0,
+            },
+            None,
+        );
+        assert_eq!(
+            result.to_string(),
+            ":: retrying :: wait :: WaitRandom :: new (0.1f32 , 100f32)"
+        );
+
+        let result = prepare_wait(
+            WaitConfig::Random {
+                min: 0.1,
+                max: 100.0,
+            },
+            Some("TEST".to_string()),
+        );
+        assert_eq!(result.to_string(), ":: retrying :: wait :: WaitRandom :: new (\
+            :: retrying :: override_by_env :: < f32 > (0.1f32 , \"TEST\" , :: retrying :: envs :: RETRYING_WAIT_RANDOM_MIN) , \
+            :: retrying :: override_by_env :: < f32 > (100f32 , \"TEST\" , :: retrying :: envs :: RETRYING_WAIT_RANDOM_MAX))");
+
+        let result = prepare_wait(
+            WaitConfig::Exponential {
+                multiplier: 0.5,
+                min: 0.5,
+                max: 1.5,
+                exp_base: 2,
+            },
+            None,
+        );
+        assert_eq!(
+            result.to_string(),
+            ":: retrying :: wait :: WaitExponential :: new (0.5f32 , 0.5f32 , 1.5f32 , 2u32)"
+        );
+
+        let result = prepare_wait(
+            WaitConfig::Exponential {
+                multiplier: 0.5,
+                min: 0.5,
+                max: 1.5,
+                exp_base: 2,
+            },
+            Some("TEST".to_string()),
+        );
+        assert_eq!(result.to_string(), ":: retrying :: wait :: WaitExponential :: new (\
+            :: retrying :: override_by_env :: < f32 > (0.5f32 , \"TEST\" , :: retrying :: envs :: RETRYING_WAIT_EXPONENTIAL_MULTIPLIER) , \
+            :: retrying :: override_by_env :: < f32 > (0.5f32 , \"TEST\" , :: retrying :: envs :: RETRYING_WAIT_EXPONENTIAL_MIN) , \
+            :: retrying :: override_by_env :: < f32 > (1.5f32 , \"TEST\" , :: retrying :: envs :: RETRYING_WAIT_EXPONENTIAL_MAX) , \
+            :: retrying :: override_by_env :: < u32 > (2u32 , \"TEST\" , :: retrying :: envs :: RETRYING_WAIT_EXPONENTIAL_EXP_BASE))");
+    }
+
+    #[test]
+    fn test_prepare_retry() {
+        let result = prepare_retry(RetryConfig {
+            if_errors: Some(vec!["syn::Error".to_string()]),
+            if_not_errors: None,
+        });
+        assert_eq!(
+            result.to_string(),
+            "match err { syn :: Error { .. } => () , _ => break Err (err) } ;"
+        );
+
+        let result = prepare_retry(RetryConfig {
+            if_errors: None,
+            if_not_errors: Some(vec!["syn::Error".to_string(), "::other::Error".to_string()]),
+        });
+        assert_eq!(result.to_string(), "match err { syn :: Error { .. } | :: other :: Error { .. } => break Err (err) , _ => () } ;");
+    }
+
+    #[test]
+    fn test_add_retry_code_into_function_all_config() {
+        let config = RetryingConfig {
+            stop: Some(StopConfig {
+                attempts: Some(1),
+                duration: Some(5.5),
+            }),
+            wait: Some(WaitConfig::Fixed { seconds: 0.5 }),
+            retry: Some(RetryConfig {
+                if_errors: Some(vec![
+                    ":: syn :: Error".to_string(),
+                    ":: std :: num :: ParseIntError".to_string(),
+                ]),
+                if_not_errors: None,
+            }),
+            envs_prefix: Some(String::from("TEST")),
+        };
+
+        let function = syn::parse_quote!(
+            fn test_function(in_param: &str) -> Result<i32, ParseIntError> {
+                in_param.parse::<i32>()
             }
-            #retrying_end_of_loop_cycle
-        }
-    })
+        );
+
+        let result = add_retry_code_into_function(function, config);
+        let expected = "\
+        fn test_function < > (in_param : & str) -> Result < i32 , ParseIntError > { \
+            let mut retrying_context = :: retrying :: RetryingContext :: new () ; \
+            use :: retrying :: stop :: Stop ; \
+            let retrying_stop = :: retrying :: stop :: StopAttemptsOrDuration :: new (\
+                :: retrying :: override_by_env :: < u32 > (1u32 , \"TEST\" , :: retrying :: envs :: RETRYING_STOP_ATTEMPTS) , \
+                :: retrying :: override_by_env :: < f32 > (5.5f32 , \"TEST\" , :: retrying :: envs :: RETRYING_STOP_DURATION)\
+            ) ; \
+            use :: retrying :: wait :: Wait ; \
+            let retrying_wait = :: retrying :: wait :: WaitFixed :: new (:: retrying :: override_by_env :: < f32 > (0.5f32 , \"TEST\" , :: retrying :: envs :: RETRYING_WAIT_FIXED)) ; \
+            loop { match { in_param . parse :: < i32 > () } { \
+                Ok (result) => return Ok (result) , \
+                Err (err) if ! retrying_stop . stop_execution (& retrying_context) => { \
+                    match err { \
+                        :: syn :: Error { .. } | :: std :: num :: ParseIntError { .. } => () , \
+                        _ => break Err (err) \
+                    } ; \
+                    retrying_context . add_attempt () ; \
+                    :: retrying :: sleep_sync (retrying_wait . wait_duration (& retrying_context)) ; \
+                } , \
+                Err (err) => break Err (err) \
+            } \
+        } }";
+        assert_eq!(result.to_string(), expected);
+    }
+
+    #[test]
+    fn test_add_retry_code_into_function_no_config() {
+        let config = RetryingConfig {
+            stop: None,
+            wait: None,
+            retry: None,
+            envs_prefix: None,
+        };
+
+        let function = syn::parse_quote!(
+            fn test_function(in_param: &str) -> Result<i32, ParseIntError> {
+                in_param.parse::<i32>()
+            }
+        );
+
+        let result = add_retry_code_into_function(function, config);
+
+        let expected = "\
+        fn test_function < > (in_param : & str) -> Result < i32 , ParseIntError > { \
+            let mut retrying_context = :: retrying :: RetryingContext :: new () ; \
+            loop { match { in_param . parse :: < i32 > () } { \
+                Ok (result) => return Ok (result) , \
+                Err (err) if true => { \
+                    retrying_context . add_attempt () ; \
+                } , \
+                Err (err) => break Err (err) \
+            } \
+        } }";
+
+        assert_eq!(result.to_string(), expected);
+    }
 }

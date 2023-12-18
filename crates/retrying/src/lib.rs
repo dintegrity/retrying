@@ -2,8 +2,11 @@ pub use rand;
 pub use retrying_core::retry;
 pub use std::thread::sleep as sleep_sync;
 pub use std::time::Duration;
+use std::time::SystemTime;
 
 pub mod envs;
+pub mod stop;
+pub mod wait;
 
 #[cfg(all(feature = "tokio", feature = "async_std"))]
 compile_error!(
@@ -21,7 +24,7 @@ pub use async_std::task::sleep as sleep_async;
 use std::fmt;
 use std::str::FromStr;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RetryingError {
     pub msg: String,
 }
@@ -37,6 +40,35 @@ impl RetryingError {
 impl fmt::Display for RetryingError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Retry failed with error: {}", self.msg)
+    }
+}
+
+#[derive(Debug)]
+pub struct RetryingContext {
+    attempt_num: u32,
+    start_time: SystemTime,
+}
+
+impl RetryingContext {
+    pub fn new() -> Self {
+        RetryingContext {
+            attempt_num: 1,
+            start_time: ::std::time::SystemTime::now(),
+        }
+    }
+
+    pub fn started_at(&self) -> SystemTime {
+        self.start_time
+    }
+
+    pub fn add_attempt(&mut self) {
+        self.attempt_num += 1;
+    }
+}
+
+impl Default for RetryingContext {
+    fn default() -> Self {
+        RetryingContext::new()
     }
 }
 
@@ -94,5 +126,38 @@ fn get_env_case_insensitive(environment: &String) -> Result<Option<String>, Retr
         } else {
             Ok(None)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::*;
+
+    #[test]
+    fn test_override_by_env() {
+        let result = override_by_env::<f32>(0.5f32, "MY_METHOD", "TEST");
+        assert_eq!(result, 0.5f32);
+
+        std::env::set_var("MY_METHOD__TEST", "3.5");
+        let result = override_by_env::<f32>(0.5f32, "MY_METHOD", "TEST");
+        assert_eq!(result, 3.5f32);
+
+        std::env::remove_var("MY_METHOD__TEST")
+    }
+
+    #[test]
+    fn test_get_env_case_insensitive() {
+        let testing_env = String::from("MY_METHOD__RETRYING__STOP__ATTEMPTS");
+
+        std::env::set_var(&testing_env, "3");
+        let result = get_env_case_insensitive(&testing_env.to_lowercase());
+        assert_eq!(result.ok(), Some(Some(String::from("3"))));
+
+        std::env::set_var(testing_env.to_lowercase(), "5");
+        let result = get_env_case_insensitive(&testing_env.to_lowercase());
+        assert_eq!(result.err(), Some(RetryingError{msg: String::from("More than one environment is available for pattern my_method__retrying__stop__attempts. Please unset unnecessary variables and leave exactly one.")}));
+
+        std::env::remove_var(&testing_env);
+        std::env::remove_var(testing_env.to_lowercase());
     }
 }

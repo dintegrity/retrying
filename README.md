@@ -77,13 +77,13 @@ Retrying allows overriding macros configuration in runtime using env variables w
 
 Example of usage:
 ```rust
-#[retrying::retry(stop=attempts(2), envs_prefix="test")]
+#[retrying::retry(stop=attempts(2),envs_prefix="test")]
 ```
 With above configuration macros checks in runtime the availability of OS env variable TEST__RETRYING__STOP__ATTEMPTS (case-insensitive) and if variable is set then number of retry attempt will be the value of TEST__RETRYING__STOP__ATTEMPTS. If the list of OS environment contains more than one configuration option with the same prefix then macros ignores OS env variable and take configuration value from code.
 
 ## Features
-tokio - builds retrying library for using with tokio asynchronous runtime.
-async_std - builds retrying library for using with async_std asynchronous runtime.
+`tokio` - builds retrying library for using with tokio asynchronous runtime.
+`async_std` - builds retrying library for using with async_std asynchronous runtime.
 
 ## Examples
 Examples are available in ./crates/retrying/example and can be tested using cargo.
@@ -98,4 +98,45 @@ cargo run --features="tokio" --example tokio
 Async async-std:
 ```bash
 cargo run --features="async_std" --example async_std
+```
+
+## Understanding of macros
+`retrying::retry` macros is not a magic and it only helps developers to avoid writing extra code.
+The resulting code depends on the provided configuration and may be changed in future releases.
+Examples of code generation:
+```rust
+#[retry(stop=(attempts(4)|duration(2)),wait=fixed(0.9))]
+fn my_method(in_param: &str) -> Result<i32, ParseIntError> {
+    in_param.parse::<i32>()
+}
+```
+Generated code:
+```rust
+fn my_method(in_param: &str) -> Result<i32, ParseIntError> {
+    let mut retrying_context = ::retrying::RetryingContext::new();
+    use ::retrying::stop::Stop;
+    let retrying_stop =
+        ::retrying::stop::StopAttemptsOrDuration::new(4u32, 2f32);
+    use ::retrying::wait::Wait;
+    let retrying_wait = ::retrying::wait::WaitFixed::new(0.9f32);
+    loop {
+        match { in_param.parse::<i32>() } {
+            Ok(result) => return Ok(result),
+            Err(err) if !retrying_stop.stop_execution(&retrying_context) => {
+                match err {
+                    std::num::ParseIntError { .. } => (),
+                    _ => break Err(err),
+                };
+                retrying_context.add_attempt();
+                ::retrying::sleep_sync(retrying_wait.wait_duration(&retrying_context));
+            }
+            Err(err) => break Err(err),
+        }
+    }
+}
+```
+It is possible to use cargo for checking generated code. For examples, below command shows generated code for all examples,
+```bash
+cd ./crates/retrying
+cargo rustc --profile=check --examples -- -Zunpretty=expanded
 ```
