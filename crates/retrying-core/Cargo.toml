@@ -2,7 +2,7 @@
 name = "retrying-core"
 version = "0.1.0"
 rust-version = "1.64"
-description = "Core of `retrying` library for Rust (developers only)"
+description = "Core of `retrying` library for Rust (macros)"
 authors = ["Maksym Dovhal <maksym.dovhal@gmail.com>"]
 keywords = ["retry", "retrying"]
 homepage = "https://github.com/dintegrity/retrying"
