@@ -6,7 +6,7 @@
 
 **Implemented enhancements:**
 
-- Initial implementation of retry macros [commit](https://github.com/dintegrity/retrying/commit/f05bce687bec55ed74bce649b057e6ccc3be543f)
+- Initial implementation of retry macros
 - 
 
 **Fixed bugs:**

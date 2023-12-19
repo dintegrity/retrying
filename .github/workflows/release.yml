@@ -1,0 +1,53 @@
+name: Release to crates.io
+
+on:
+  push:
+    tags: ["retrying-v[0-9]+.*"]
+
+jobs:
+  validate-release-tag:
+    name: Validate git tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: compare git tag with cargo metadata for retrying-core
+        run: |
+          PUSHED_TAG=${GITHUB_REF##*/}
+          CURR_VER=$( grep version ./crates/retrying-core/Cargo.toml | head -n 1 | awk '{print $3}' | tr -d '"' )
+          if [[ "${PUSHED_TAG}" != "v${CURR_VER}" ]]; then
+            echo "Cargo metadata (/crates/retrying/Cargo.toml) has version set to ${CURR_VER}, but got pushed tag ${PUSHED_TAG}."
+            exit 1
+          fi
+      - name: compare git tag with cargo metadata for retrying
+        run: |
+          PUSHED_TAG=${GITHUB_REF##*/}
+          CURR_VER=$( grep version ./crates/retrying/Cargo.toml | head -n 1 | awk '{print $3}' | tr -d '"' )
+          if [[ "${PUSHED_TAG}" != "v${CURR_VER}" ]]; then
+            echo "Cargo metadata (/crates/retrying/Cargo.toml) has version set to ${CURR_VER}, but got pushed tag ${PUSHED_TAG}."
+            exit 1
+          fi
+  
+  test:
+    needs: validate-release-tag
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Format
+      run: cargo fmt --all -- --check
+    - name: Format
+      run: cargo clippy --all-targets -- -D warnings
+    - name: Run tests
+      run: cargo test --verbose
+
+  release:
+    needs: test
+    name: Release crate
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      # - name: cargo publish retrying-core to crates.io
+      #  run: cargo +stable publish --token $CARGO_REGISTRY_TOKEN --all-features -p retrying-core
+      - name: cargo publish retrying to crates.io
+        run: cargo +stable publish --token $CARGO_REGISTRY_TOKEN --all-features -p retrying

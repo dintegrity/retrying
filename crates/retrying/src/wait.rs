@@ -67,3 +67,63 @@ impl Wait for WaitExponential {
             .min(self.multiplier * (self.exp_base.pow(ctx.attempt_num - 1) as f32) + self.min)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::*;
+
+    use super::*;
+
+    #[test]
+    fn test_fixed_wait_seconds() {
+        let ctx = RetryingContext::default();
+
+        let wait = WaitFixed { seconds: 10f32 };
+
+        assert_eq!(wait.wait_seconds(&ctx), 10f32)
+    }
+
+    #[test]
+    fn test_random_wait_seconds() {
+        let ctx = RetryingContext::default();
+
+        let wait = WaitRandom {
+            min: 1f32,
+            max: 10.5f32,
+        };
+
+        assert!((1f32..=10.5f32).contains(&wait.wait_seconds(&ctx)))
+    }
+
+    #[test]
+    fn test_exponential_wait_seconds() {
+        let mut ctx = RetryingContext::default();
+
+        let wait = WaitExponential {
+            multiplier: 0.5,
+            min: 1f32,
+            max: 10.5f32,
+            exp_base: 2,
+        };
+
+        assert_eq!(wait.wait_seconds(&ctx), 1.5f32);
+
+        ctx.add_attempt();
+        assert_eq!(wait.wait_seconds(&ctx), 2.0f32);
+
+        ctx.add_attempt();
+        assert_eq!(wait.wait_seconds(&ctx), 3.0f32);
+
+        ctx.add_attempt();
+        assert_eq!(wait.wait_seconds(&ctx), 5.0f32);
+
+        ctx.add_attempt();
+        assert_eq!(wait.wait_seconds(&ctx), 9.0f32);
+
+        ctx.add_attempt();
+        assert_eq!(wait.wait_seconds(&ctx), 10.5f32);
+
+        ctx.add_attempt();
+        assert_eq!(wait.wait_seconds(&ctx), 10.5f32);
+    }
+}
